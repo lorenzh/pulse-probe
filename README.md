@@ -60,7 +60,11 @@ npm run format  # Biome: apply formatting and safe lint fixes
 
 `npm ci` installs a Lefthook pre-commit hook that runs `biome check` and ESLint (SonarJS) on the staged files and rejects the commit if they are badly formatted or fail lint. Run `npm run format` to fix formatting.
 
-Quality checks: Biome, SonarJS recommended rules via ESLint with cognitive complexity ≤ 15, and line coverage ≥ 80 %. Run them with `npm run lint` and `npm test`. The SonarJS toolchain lives in the `tools/sonarjs` workspace with its own TypeScript 6, because typescript-eslint does not support TypeScript 7 yet; the repository itself still uses TypeScript 7.
+Quality checks: Biome, SonarJS recommended rules via ESLint with cognitive complexity ≤ 15, and line coverage ≥ 80 %. Run them with `npm run lint` and `npm test`. The shared configuration lives in `lorenzh/pulse-config`, which also holds the SonarJS toolchain with its own TypeScript 6 (typescript-eslint does not support TypeScript 7 yet); the repository itself still uses TypeScript 7.
+
+## Shared tooling configuration
+
+The shared tooling configuration lives in `lorenzh/pulse-config`. The other pulse repositories use it through `extends` (Biome, TypeScript, Lefthook), a one-line ESLint config and `uses:` (CI). A rule change is made in `pulse-config` and reaches a target when its pin is updated. "Never weaken `biome.json`, `tsconfig.json` or CI" refers to the shared config.
 
 ## TLS checks
 
