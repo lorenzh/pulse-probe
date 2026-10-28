@@ -1,6 +1,7 @@
 {
   "name": "@lorenzh/pulse-probe",
   "version": "0.0.0",
+  "license": "MIT",
   "description": "Worker that runs checks (HTTP, later TCP and TLS) and posts results to pulse-api.",
   "type": "module",
   "private": true,
