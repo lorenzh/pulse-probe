@@ -33,7 +33,9 @@ export async function fetchChecks(
         return check;
       });
     } catch (err) {
-      deps.log(`fetching checks failed: ${err instanceof Error ? err.message : String(err)}; retrying in ${retryMs}ms`);
+      deps.log(
+        `fetching checks failed: ${err instanceof Error ? err.message : String(err)}; retrying in ${retryMs}ms`,
+      );
       await deps.sleep(retryMs);
     }
   }
@@ -59,7 +61,9 @@ export async function postResult(
     }
     return true;
   } catch (err) {
-    deps.log(`dropping result for ${result.checkId}: ${err instanceof Error ? err.message : String(err)}`);
+    deps.log(
+      `dropping result for ${result.checkId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return false;
   }
 }

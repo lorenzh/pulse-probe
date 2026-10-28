@@ -37,7 +37,10 @@ export function startScheduler(checks: Check[], deps: SchedulerDeps): Scheduler 
     }
     if (stopped) return;
     const delay = Math.max(0, check.intervalMs - (deps.now() - started));
-    handles.set(check.id, deps.timer.setTimeout(() => void tick(check), delay));
+    handles.set(
+      check.id,
+      deps.timer.setTimeout(() => void tick(check), delay),
+    );
   };
 
   for (const check of checks) void tick(check);
