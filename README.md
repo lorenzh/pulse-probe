@@ -68,3 +68,5 @@ A check with `type: "tls"` (`host`, `port`, `warnDays`) connects to `host:port`,
 - Otherwise it is `up`.
 
 The chain and the hostname are not verified (`rejectUnauthorized: false`); only the leaf's expiry is judged. The TLS tests need the `openssl` CLI.
+
+Licensed under the MIT licence, see [LICENSE](LICENSE).
