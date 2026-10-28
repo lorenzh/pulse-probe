@@ -203,3 +203,14 @@ test("fetchChecks forwards retries and retryDelayMs", async () => {
   });
   assert.deepEqual(checks, body);
 });
+
+test("fetchChecks forwards latencyObjectiveMs", async () => {
+  const body = [{ id: "h", name: "H", url: "http://x", intervalMs: 5000, latencyObjectiveMs: 500 }];
+  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const checks = await fetchChecks("http://api", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: () => {},
+  });
+  assert.deepEqual(checks, body);
+});

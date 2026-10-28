@@ -12,7 +12,7 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 At startup the probe fetches the checks from the API (`GET /checks`, retried every 2000 ms until it succeeds), then runs each one immediately and every `intervalMs` after that. A check never overlaps with itself. Each run is an HTTP GET (redirects followed, default timeout 5000 ms unless the check sets `timeoutMs`) and its `Result` is posted to `POST /results`. If the API is unreachable or does not answer 204, the result is logged and dropped.
 
-A response with a 2xx status is `up`. Anything else is `down`, with one of these reasons: `HTTP <code>`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
+A response with a 2xx status is `up`, unless the check sets `latencyObjectiveMs` and the measured `latencyMs` is strictly above it: then the result is `degraded` with the reason `latency <n>ms over objective <m>ms` (equal to the objective is still `up`). A degraded result counts as a success and stops retries. An objective at or above `timeoutMs` can never be reached, so the check is never degraded. Anything else is `down`, with one of these reasons: `HTTP <code>`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
 
 ## Retries
 

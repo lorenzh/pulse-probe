@@ -103,10 +103,19 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? start : deps.now();
-    const result = await attemptHttp(check.url, deps, timeoutMs, (status, code, reason) =>
-      finish(status, code, reason, undefined, attempt, attemptStart),
-    );
-    if (result.status === "up" || attempt > retries) return result;
+    const result = await attemptHttp(check.url, deps, timeoutMs, (status, code, reason) => {
+      const r = finish(status, code, reason, undefined, attempt, attemptStart);
+      const objective = check.latencyObjectiveMs;
+      if (status === "up" && objective !== undefined && r.latencyMs > objective) {
+        return {
+          ...r,
+          status: "degraded",
+          reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
+        };
+      }
+      return r;
+    });
+    if (result.status !== "down" || attempt > retries) return result;
     if (deps.now() + retryDelayMs >= start + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
