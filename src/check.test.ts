@@ -20,7 +20,8 @@ const close = (s: http.Server): Promise<void> =>
 
 let t = 1000;
 const now = (): number => (t += 7);
-const deps = { fetch, now, location: "default" };
+const sleep = async (): Promise<void> => {};
+const deps = { fetch, now, sleep, location: "default" };
 
 test("up on 200", async () => {
   const { server, url } = await listen((_q, res) => res.end("ok"));
@@ -98,10 +99,120 @@ test("result carries the location and the request the user agent", async () => {
   try {
     const r = await runCheck(
       { id: "a", name: "A", url, intervalMs: 1000 },
-      { fetch, now, location: "eu" },
+      { fetch, now, sleep, location: "eu" },
     );
     assert.equal(r.location, "eu");
     assert.equal(agent, "pulse-probe (eu)");
+  } finally {
+    await close(server);
+  }
+});
+
+test("no retries: a failure is down after one attempt", async () => {
+  let hits = 0;
+  const { server, url } = await listen((_q, res) => {
+    hits++;
+    res.statusCode = hits === 1 ? 500 : 200;
+    res.end();
+  });
+  try {
+    const r = await runCheck({ id: "a", name: "A", url, intervalMs: 100_000 }, deps);
+    assert.equal(r.status, "down");
+    assert.equal(r.attempts, 1);
+    assert.equal(hits, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("retries: success on the second attempt is up", async () => {
+  let hits = 0;
+  const { server, url } = await listen((_q, res) => {
+    hits++;
+    res.statusCode = hits === 1 ? 500 : 200;
+    res.end();
+  });
+  const sleeps: number[] = [];
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 100_000, retries: 1 },
+      { ...deps, sleep: async (ms) => void sleeps.push(ms) },
+    );
+    assert.equal(r.status, "up");
+    assert.equal(r.statusCode, 200);
+    assert.equal(r.reason, null);
+    assert.equal(r.attempts, 2);
+    assert.equal(hits, 2);
+    assert.deepEqual(sleeps, [1000]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("retries: always failing reports the last attempt and waits retryDelayMs", async () => {
+  let hits = 0;
+  const { server, url } = await listen((_q, res) => {
+    hits++;
+    res.statusCode = hits === 1 ? 500 : 503;
+    res.end();
+  });
+  const sleeps: number[] = [];
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 100_000, retries: 1, retryDelayMs: 250 },
+      { ...deps, sleep: async (ms) => void sleeps.push(ms) },
+    );
+    assert.equal(r.status, "down");
+    assert.equal(r.statusCode, 503);
+    assert.equal(r.reason, "HTTP 503");
+    assert.equal(r.attempts, 2);
+    assert.equal(hits, 2);
+    assert.deepEqual(sleeps, [250]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("retries: success stops the loop early", async () => {
+  let hits = 0;
+  const { server, url } = await listen((_q, res) => {
+    hits++;
+    res.end();
+  });
+  try {
+    const r = await runCheck({ id: "a", name: "A", url, intervalMs: 100_000, retries: 5 }, deps);
+    assert.equal(r.attempts, 1);
+    assert.equal(hits, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("retries: the deadline guard stops retrying near the interval end", async () => {
+  const { server, url } = await listen((_q, res) => {
+    res.statusCode = 500;
+    res.end();
+  });
+  let clock = 0;
+  const sleeps: number[] = [];
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 2500, retries: 5, retryDelayMs: 1000 },
+      {
+        ...deps,
+        now: () => clock,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          clock += ms;
+        },
+      },
+    );
+    // t=0 fail, wait -> 1000 fail, wait -> 2000 fail; 2000+1000 >= 2500 so stop
+    assert.equal(r.status, "down");
+    assert.equal(r.attempts, 3);
+    assert.deepEqual(sleeps, [1000, 1000]);
+    assert.equal(r.timestamp, 0);
+    assert.equal(r.latencyMs, 0);
   } finally {
     await close(server);
   }

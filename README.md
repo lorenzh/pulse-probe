@@ -14,6 +14,10 @@ At startup the probe fetches the checks from the API (`GET /checks`, retried eve
 
 A response with a 2xx status is `up`. Anything else is `down`, with one of these reasons: `HTTP <code>`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
 
+## Retries
+
+An HTTP check may set `retries` (integer 0..10, default 0) and `retryDelayMs` (integer 0..60000, default 1000). A failed attempt (non-2xx, timeout or network error) is repeated up to `retries` times, waiting `retryDelayMs` between attempts; the first success stops the loop and the result is `up`. The result is that of the last attempt (`status`, `statusCode`, `reason`, `latencyMs`), its `timestamp` is the start of the first attempt, and `attempts` is the number of attempts made. The probe stops retrying early when the next attempt would start at or after the end of the check's interval. TLS checks are not retried (`attempts` is 1).
+
 ## Install
 
 Requires Node 24 or newer.
