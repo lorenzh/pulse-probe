@@ -18,7 +18,7 @@ const scheduler = startScheduler(checks, {
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   },
   now,
-  run: (check) => runCheck(check, { fetch, now, location }),
+  run: (check) => runCheck(check, { fetch, now, sleep: (ms) => sleep(ms), location }),
   onResult: async (result) => {
     await postResult(apiUrl, result, { fetch, log });
   },

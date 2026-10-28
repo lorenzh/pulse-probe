@@ -47,6 +47,7 @@ const mk = (c: Check): Result => ({
   latencyMs: 1,
   reason: null,
   location: "default",
+  attempts: 1,
 });
 
 test("runs immediately, then every interval", async () => {
@@ -135,5 +136,33 @@ test("errors are reported and scheduling continues", async () => {
   await f.advance(1000);
   assert.equal(calls, 2);
   assert.equal(errors.length, 2);
+  s.stop();
+});
+
+test("the next run is armed only after a retrying run finished", async () => {
+  const f = fakeTimer();
+  let calls = 0;
+  const waits: Array<() => void> = [];
+  const retrying: Check = { ...check, retries: 1, retryDelayMs: 100 };
+  const s = startScheduler([retrying], {
+    timer: f.timer,
+    now: f.now,
+    run: async (c) => {
+      calls++;
+      // first attempt fails, the fake sleep holds the run open
+      await new Promise<void>((r) => waits.push(r));
+      return { ...mk(c), attempts: 2 };
+    },
+    onResult: () => {},
+  });
+  await flush();
+  assert.equal(calls, 1);
+  assert.equal(f.pending.size, 0);
+  await f.advance(900);
+  assert.equal(calls, 1);
+  assert.equal(f.pending.size, 0);
+  waits[0]!();
+  await flush();
+  assert.equal(f.pending.size, 1);
   s.stop();
 });

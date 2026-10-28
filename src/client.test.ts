@@ -13,6 +13,7 @@ const result: Result = {
   latencyMs: 3,
   reason: "HTTP 503",
   location: "default",
+  attempts: 1,
 };
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
@@ -188,4 +189,17 @@ test("fetchChecks retries on an invalid tls check", async () => {
   assert.equal(checks.length, 1);
   assert.equal(calls, 2);
   assert.match(logs[0] ?? "", /invalid tls check t/);
+});
+
+test("fetchChecks forwards retries and retryDelayMs", async () => {
+  const body = [
+    { id: "h", name: "H", url: "http://x", intervalMs: 5000, retries: 2, retryDelayMs: 300 },
+  ];
+  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const checks = await fetchChecks("http://api", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: () => {},
+  });
+  assert.deepEqual(checks, body);
 });

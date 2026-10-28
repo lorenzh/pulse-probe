@@ -6,6 +6,8 @@ import { userAgent } from "./location.ts";
 
 export const DEFAULT_TIMEOUT_MS = 5000;
 
+export const DEFAULT_RETRY_DELAY_MS = 1000;
+
 export const DAY_MS = 86_400_000;
 
 export interface TlsConnectOptions {
@@ -55,6 +57,8 @@ export interface CheckDeps {
   /** Defaults to the real TLS connection. */
   tlsConnect?: TlsConnect;
   now: () => number;
+  /** Waits `ms` milliseconds between attempts. */
+  sleep: (ms: number) => Promise<void>;
   /** Probe location name, set on every result. */
   location: string;
 }
@@ -81,33 +85,55 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
     statusCode: number | null,
     reason: string | null,
     certDaysLeft?: number | null,
+    attempts = 1,
+    attemptStart = start,
   ): Result => ({
     checkId: check.id,
     timestamp: start,
     status,
     statusCode,
-    latencyMs: Math.max(0, deps.now() - start),
+    latencyMs: Math.max(0, deps.now() - attemptStart),
     reason,
     location: deps.location,
+    attempts,
     ...(certDaysLeft !== undefined ? { certDaysLeft } : {}),
   });
   if (check.type === "tls") return runTlsCheck(check, deps, timeoutMs, finish);
+  const retries = check.retries ?? 0;
+  const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  for (let attempt = 1; ; attempt++) {
+    const attemptStart = attempt === 1 ? start : deps.now();
+    const result = await attemptHttp(check.url, deps, timeoutMs, (status, code, reason) =>
+      finish(status, code, reason, undefined, attempt, attemptStart),
+    );
+    if (result.status === "up" || attempt > retries) return result;
+    if (deps.now() + retryDelayMs >= start + check.intervalMs) return result;
+    await deps.sleep(retryDelayMs);
+  }
+}
+
+async function attemptHttp(
+  url: string,
+  deps: CheckDeps,
+  timeoutMs: number,
+  done: (status: Result["status"], statusCode: number | null, reason: string | null) => Result,
+): Promise<Result> {
   try {
-    const res = await deps.fetch(check.url, {
+    const res = await deps.fetch(url, {
       method: "GET",
       headers: { "user-agent": userAgent(deps.location) },
       signal: AbortSignal.timeout(timeoutMs),
     });
     await res.body?.cancel().catch(() => {});
     if (res.status >= 200 && res.status < 300) {
-      return finish("up", res.status, null);
+      return done("up", res.status, null);
     }
-    return finish("down", res.status, `HTTP ${res.status}`);
+    return done("down", res.status, `HTTP ${res.status}`);
   } catch (err) {
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
-      return finish("down", null, `timeout after ${timeoutMs}ms`);
+      return done("down", null, `timeout after ${timeoutMs}ms`);
     }
-    return finish("down", null, errorReason(err));
+    return done("down", null, errorReason(err));
   }
 }
 
@@ -120,6 +146,7 @@ async function runTlsCheck(
     statusCode: number | null,
     reason: string | null,
     certDaysLeft?: number | null,
+    attempts?: number,
   ) => Result,
 ): Promise<Result> {
   try {

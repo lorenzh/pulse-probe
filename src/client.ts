@@ -51,6 +51,8 @@ export async function fetchChecks(
         }
         const check: Check = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
         if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
+        if (c.retries !== undefined) check.retries = c.retries;
+        if (c.retryDelayMs !== undefined) check.retryDelayMs = c.retryDelayMs;
         return check;
       });
     } catch (err) {
