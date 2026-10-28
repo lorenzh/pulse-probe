@@ -133,3 +133,59 @@ test("fetchChecks retries until the API answers", async () => {
     await close(server);
   }
 });
+
+test("fetchChecks passes tls checks through and rebuilds http checks", async () => {
+  const body = [
+    {
+      id: "t",
+      name: "T",
+      type: "tls",
+      host: "example.com",
+      port: 443,
+      warnDays: 14,
+      intervalMs: 1000,
+      state: "up",
+      certDaysLeft: 40,
+    },
+    { id: "h", name: "H", url: "http://x", intervalMs: 5, state: "up" },
+  ];
+  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const checks = await fetchChecks("http://api", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: () => {},
+  });
+  assert.deepEqual(checks, [
+    {
+      id: "t",
+      name: "T",
+      type: "tls",
+      host: "example.com",
+      port: 443,
+      warnDays: 14,
+      intervalMs: 1000,
+    },
+    { id: "h", name: "H", url: "http://x", intervalMs: 5 },
+  ]);
+});
+
+test("fetchChecks retries on an invalid tls check", async () => {
+  let calls = 0;
+  const logs: string[] = [];
+  const fakeFetch = (async () => {
+    calls++;
+    return Response.json(
+      calls === 1
+        ? [{ id: "t", name: "T", type: "tls", intervalMs: 1 }]
+        : [{ id: "h", name: "H", url: "http://x", intervalMs: 5 }],
+    );
+  }) as unknown as typeof fetch;
+  const checks = await fetchChecks("http://api", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: (m) => logs.push(m),
+  });
+  assert.equal(checks.length, 1);
+  assert.equal(calls, 2);
+  assert.match(logs[0] ?? "", /invalid tls check t/);
+});
