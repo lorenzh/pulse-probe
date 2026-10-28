@@ -6,6 +6,8 @@ pulse is an uptime monitor with a status page. This repository is its probe: a w
 
 pulse-probe depends on [pulse-contract](https://github.com/lorenzh/pulse-contract) for its shared types (at build time) and talks to [pulse-api](https://github.com/lorenzh/pulse-api) at run time: `GET /checks` and `POST /results`. pulse-api must be reachable for the probe to do anything.
 
+Contributing: see [AGENTS.md](AGENTS.md).
+
 pulse is built by Paragon Factory agents from the issues in [pulse-meta](https://github.com/lorenzh/pulse-meta).
 
 ## Behavior
