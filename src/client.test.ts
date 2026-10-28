@@ -12,6 +12,7 @@ const result: Result = {
   statusCode: 503,
   latencyMs: 3,
   reason: "HTTP 503",
+  location: "default",
 };
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {

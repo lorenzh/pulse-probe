@@ -30,9 +30,18 @@ npm start
 
 ## Settings
 
-| Variable        | Default                 | Meaning                |
-| --------------- | ----------------------- | ---------------------- |
-| `PULSE_API_URL` | `http://localhost:3000` | Base URL of pulse-api. |
+| Variable         | Default                 | Meaning                                                                         |
+| ---------------- | ----------------------- | ------------------------------------------------------------------------------- |
+| `PULSE_API_URL`  | `http://localhost:3000` | Base URL of pulse-api.                                                          |
+| `PULSE_LOCATION` | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters). |
+
+Every result carries the location, and check requests send `User-Agent: pulse-probe (<location>)`. A longer location makes the probe exit at startup with an error. pulse-api declares a check down only when at least two locations report it down, so run several probes, each with its own location:
+
+```sh
+PULSE_LOCATION=a npm start
+PULSE_LOCATION=b npm start
+PULSE_LOCATION=c npm start
+```
 
 ## Development
 
