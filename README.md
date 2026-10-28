@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lorenzh/pulse-probe/actions/workflows/ci.yml/badge.svg)](https://github.com/lorenzh/pulse-probe/actions/workflows/ci.yml)
 
-pulse is an uptime monitor with a status page. This repository is its probe: a worker that fetches the checks from pulse-api, runs them over HTTP (TCP and TLS checks may follow later) and posts the results back.
+pulse is an uptime monitor with a status page. This repository is its probe: a worker that fetches the checks from pulse-api, runs them over HTTP or as TLS certificate expiry checks (TCP checks may follow later) and posts the results back.
 
 pulse-probe depends on [pulse-contract](https://github.com/lorenzh/pulse-contract) for its shared types (at build time) and talks to [pulse-api](https://github.com/lorenzh/pulse-api) at run time: `GET /checks` and `POST /results`. pulse-api must be reachable for the probe to do anything.
 
@@ -53,3 +53,14 @@ npm run format  # Biome: apply formatting and safe lint fixes
 ```
 
 `npm ci` installs a Lefthook pre-commit hook that runs `biome check` on the staged files and rejects the commit if they are badly formatted or fail lint. Run `npm run format` to fix them.
+
+## TLS checks
+
+A check with `type: "tls"` (`host`, `port`, `warnDays`) connects to `host:port`, completes the handshake with `servername = host` and reads the leaf certificate's `valid_to`. `timeoutMs` (default 5000 ms) bounds connect plus handshake. The result has `statusCode` null and `certDaysLeft`, the floored whole days left (negative when expired, null when no certificate was read).
+
+- `certDaysLeft <= warnDays` is `down` with reason `certificate expires in N days`.
+- An expired certificate is `down` with reason `certificate expired`.
+- A connect or handshake error is `down` with the error code, or `timeout after <n>ms`.
+- Otherwise it is `up`.
+
+The chain and the hostname are not verified (`rejectUnauthorized: false`); only the leaf's expiry is judged. The TLS tests need the `openssl` CLI.

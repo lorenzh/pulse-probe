@@ -28,6 +28,27 @@ export async function fetchChecks(
       const body = (await res.json()) as ChecksResponse;
       if (!Array.isArray(body)) throw new Error("unexpected response");
       return body.map((c) => {
+        if (c.type === "tls") {
+          if (
+            typeof c.host !== "string" ||
+            c.host === "" ||
+            !Number.isInteger(c.port) ||
+            !Number.isInteger(c.warnDays)
+          ) {
+            throw new Error(`invalid tls check ${String(c.id)}`);
+          }
+          const check: Check = {
+            id: c.id,
+            name: c.name,
+            type: "tls",
+            host: c.host,
+            port: c.port,
+            warnDays: c.warnDays,
+            intervalMs: c.intervalMs,
+          };
+          if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
+          return check;
+        }
         const check: Check = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
         if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
         return check;
