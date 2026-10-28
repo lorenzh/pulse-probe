@@ -1,10 +1,14 @@
 import type { Check, Result } from "@lorenzh/pulse-contract";
 
+import { userAgent } from "./location.ts";
+
 export const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface CheckDeps {
   fetch: typeof fetch;
   now: () => number;
+  /** Probe location name, set on every result. */
+  location: string;
 }
 
 function errorReason(err: unknown): string {
@@ -35,10 +39,12 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
     statusCode,
     latencyMs: Math.max(0, deps.now() - start),
     reason,
+    location: deps.location,
   });
   try {
     const res = await deps.fetch(check.url, {
       method: "GET",
+      headers: { "user-agent": userAgent(deps.location) },
       signal: AbortSignal.timeout(timeoutMs),
     });
     await res.body?.cancel().catch(() => {});

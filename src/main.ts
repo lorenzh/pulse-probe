@@ -1,14 +1,16 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { runCheck } from "./check.ts";
 import { fetchChecks, postResult } from "./client.ts";
+import { parseLocation } from "./location.ts";
 import { startScheduler } from "./scheduler.ts";
 
 const apiUrl = process.env.PULSE_API_URL ?? "http://localhost:3000";
+const location = parseLocation(process.env.PULSE_LOCATION);
 const log = (message: string): void => console.error(`[probe] ${message}`);
 const now = (): number => Date.now();
 
 const checks = await fetchChecks(apiUrl, { fetch, sleep: (ms) => sleep(ms), log });
-log(`running ${checks.length} check(s) against ${apiUrl}`);
+log(`running ${checks.length} check(s) against ${apiUrl} from location ${location}`);
 
 const scheduler = startScheduler(checks, {
   timer: {
@@ -16,7 +18,7 @@ const scheduler = startScheduler(checks, {
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   },
   now,
-  run: (check) => runCheck(check, { fetch, now }),
+  run: (check) => runCheck(check, { fetch, now, location }),
   onResult: async (result) => {
     await postResult(apiUrl, result, { fetch, log });
   },

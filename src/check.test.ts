@@ -20,7 +20,7 @@ const close = (s: http.Server): Promise<void> =>
 
 let t = 1000;
 const now = (): number => (t += 7);
-const deps = { fetch, now };
+const deps = { fetch, now, location: "default" };
 
 test("up on 200", async () => {
   const { server, url } = await listen((_q, res) => res.end("ok"));
@@ -84,6 +84,24 @@ test("redirect is followed to 200", async () => {
     const r = await runCheck({ id: "a", name: "A", url, intervalMs: 1000 }, deps);
     assert.equal(r.status, "up");
     assert.equal(r.statusCode, 200);
+  } finally {
+    await close(server);
+  }
+});
+
+test("result carries the location and the request the user agent", async () => {
+  let agent: string | undefined;
+  const { server, url } = await listen((q, res) => {
+    agent = q.headers["user-agent"];
+    res.end("ok");
+  });
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 1000 },
+      { fetch, now, location: "eu" },
+    );
+    assert.equal(r.location, "eu");
+    assert.equal(agent, "pulse-probe (eu)");
   } finally {
     await close(server);
   }

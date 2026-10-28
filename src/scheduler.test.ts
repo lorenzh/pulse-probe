@@ -46,6 +46,7 @@ const mk = (c: Check): Result => ({
   statusCode: 200,
   latencyMs: 1,
   reason: null,
+  location: "default",
 });
 
 test("runs immediately, then every interval", async () => {
