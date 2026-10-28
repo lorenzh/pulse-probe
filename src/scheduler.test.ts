@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { Check, Result } from "@lorenzh/pulse-contract";
 import { startScheduler, type Timer } from "./scheduler.ts";
 
@@ -40,14 +40,22 @@ function fakeTimer() {
 
 const check: Check = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
 const mk = (c: Check): Result => ({
-  checkId: c.id, timestamp: 0, status: "up", statusCode: 200, latencyMs: 1, reason: null,
+  checkId: c.id,
+  timestamp: 0,
+  status: "up",
+  statusCode: 200,
+  latencyMs: 1,
+  reason: null,
 });
 
 test("runs immediately, then every interval", async () => {
   const f = fakeTimer();
   const results: Result[] = [];
   const s = startScheduler([check], {
-    timer: f.timer, now: f.now, run: async (c) => mk(c), onResult: (r) => void results.push(r),
+    timer: f.timer,
+    now: f.now,
+    run: async (c) => mk(c),
+    onResult: (r) => void results.push(r),
   });
   await flush();
   assert.equal(results.length, 1);
@@ -95,7 +103,10 @@ test("stop cancels future runs", async () => {
   const f = fakeTimer();
   let calls = 0;
   const s = startScheduler([check], {
-    timer: f.timer, now: f.now, run: async (c) => (calls++, mk(c)), onResult: () => {},
+    timer: f.timer,
+    now: f.now,
+    run: async (c) => (calls++, mk(c)),
+    onResult: () => {},
   });
   await flush();
   assert.equal(f.pending.size, 1);
@@ -110,8 +121,12 @@ test("errors are reported and scheduling continues", async () => {
   const errors: unknown[] = [];
   let calls = 0;
   const s = startScheduler([check], {
-    timer: f.timer, now: f.now,
-    run: async () => { calls++; throw new Error("boom"); },
+    timer: f.timer,
+    now: f.now,
+    run: async () => {
+      calls++;
+      throw new Error("boom");
+    },
     onResult: () => {},
     onError: (_c, e) => errors.push(e),
   });

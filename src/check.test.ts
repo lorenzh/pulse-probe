@@ -1,7 +1,7 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { test } from "node:test";
 import { runCheck } from "./check.ts";
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {

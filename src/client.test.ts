@@ -1,12 +1,17 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import { fetchChecks, postResult } from "./client.ts";
 
 const result: Result = {
-  checkId: "a", timestamp: 5, status: "down", statusCode: 503, latencyMs: 3, reason: "HTTP 503",
+  checkId: "a",
+  timestamp: 5,
+  status: "down",
+  statusCode: 503,
+  latencyMs: 3,
+  reason: "HTTP 503",
 };
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
@@ -78,19 +83,44 @@ test("fetchChecks retries until the API answers", async () => {
       return void res.end();
     }
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify([
-      { id: "a", name: "A", url: "http://x", intervalMs: 1000, timeoutMs: 500,
-        state: "up", consecutiveDown: 0, lastResultAt: null, lastReason: null },
-      { id: "b", name: "B", url: "http://y", intervalMs: 2000,
-        state: "unknown", consecutiveDown: 0, lastResultAt: null, lastReason: null },
-    ]));
+    res.end(
+      JSON.stringify([
+        {
+          id: "a",
+          name: "A",
+          url: "http://x",
+          intervalMs: 1000,
+          timeoutMs: 500,
+          state: "up",
+          consecutiveDown: 0,
+          lastResultAt: null,
+          lastReason: null,
+        },
+        {
+          id: "b",
+          name: "B",
+          url: "http://y",
+          intervalMs: 2000,
+          state: "unknown",
+          consecutiveDown: 0,
+          lastResultAt: null,
+          lastReason: null,
+        },
+      ]),
+    );
   });
   try {
     const sleeps: number[] = [];
     const logs: string[] = [];
-    const checks = await fetchChecks(url, {
-      fetch, sleep: async (ms) => void sleeps.push(ms), log: (m) => logs.push(m),
-    }, 42);
+    const checks = await fetchChecks(
+      url,
+      {
+        fetch,
+        sleep: async (ms) => void sleeps.push(ms),
+        log: (m) => logs.push(m),
+      },
+      42,
+    );
     assert.equal(hits, 3);
     assert.deepEqual(sleeps, [42, 42]);
     assert.equal(logs.length, 2);
