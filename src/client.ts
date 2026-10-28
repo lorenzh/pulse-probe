@@ -9,7 +9,9 @@ export interface ClientDeps {
 export const RETRY_MS = 2000;
 
 function join(baseUrl: string, path: string): string {
-  return baseUrl.replace(/\/+$/, "") + path;
+  let end = baseUrl.length;
+  while (end > 0 && baseUrl[end - 1] === "/") end--;
+  return baseUrl.slice(0, end) + path;
 }
 
 /** Fetches the checks from the API, retrying until it succeeds. */

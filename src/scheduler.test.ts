@@ -38,6 +38,7 @@ function fakeTimer() {
   };
 }
 
+// eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
 const check: Check = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
 const mk = (c: Check): Result => ({
   checkId: c.id,
