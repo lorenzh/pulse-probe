@@ -24,6 +24,7 @@ export async function fetchChecks(
     try {
       const res = await deps.fetch(join(baseUrl, "/checks"));
       if (!res.ok) {
+        // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
         await res.body?.cancel().catch(() => {});
         throw new Error(`HTTP ${res.status}`);
       }
@@ -80,6 +81,7 @@ export async function postResult(
       body: JSON.stringify(result),
       signal: AbortSignal.timeout(10_000),
     });
+    // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
     if (res.status !== 204) {
       deps.log(`dropping result for ${result.checkId}: API answered HTTP ${res.status}`);

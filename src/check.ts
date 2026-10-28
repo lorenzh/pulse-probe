@@ -133,6 +133,7 @@ async function attemptHttp(
       headers: { "user-agent": userAgent(deps.location) },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
     if (res.status >= 200 && res.status < 300) {
       return done("up", res.status, null);
