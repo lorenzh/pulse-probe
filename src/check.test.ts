@@ -217,3 +217,100 @@ test("retries: the deadline guard stops retrying near the interval end", async (
     await close(server);
   }
 });
+
+/** A clock whose first reading is 0 and later readings are `latency`. */
+const clockWithLatency = (latency: number) => {
+  let n = 0;
+  return () => (n++ === 0 ? 0 : latency);
+};
+
+async function objectiveRun(
+  latency: number,
+  objective: number | undefined,
+  status = 200,
+  retries?: number,
+) {
+  const { server, url } = await listen((_q, res) => {
+    res.statusCode = status;
+    res.end();
+  });
+  try {
+    return await runCheck(
+      {
+        id: "a",
+        name: "A",
+        url,
+        intervalMs: 1000,
+        ...(objective !== undefined ? { latencyObjectiveMs: objective } : {}),
+        ...(retries !== undefined ? { retries } : {}),
+      },
+      { ...deps, now: clockWithLatency(latency) },
+    );
+  } finally {
+    await close(server);
+  }
+}
+
+test("up when latency is below the objective", async () => {
+  const r = await objectiveRun(400, 500);
+  assert.equal(r.status, "up");
+  assert.equal(r.reason, null);
+});
+
+test("up when latency equals the objective", async () => {
+  const r = await objectiveRun(500, 500);
+  assert.equal(r.status, "up");
+  assert.equal(r.reason, null);
+});
+
+test("degraded when latency is above the objective", async () => {
+  const r = await objectiveRun(850, 500);
+  assert.equal(r.status, "degraded");
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.latencyMs, 850);
+  assert.equal(r.reason, "latency 850ms over objective 500ms");
+});
+
+test("never degraded without an objective", async () => {
+  const r = await objectiveRun(5000, undefined);
+  assert.equal(r.status, "up");
+});
+
+test("slow 503 stays down", async () => {
+  const r = await objectiveRun(850, 500, 503);
+  assert.equal(r.status, "down");
+  assert.equal(r.reason, "HTTP 503");
+});
+
+test("degraded result is not retried", async () => {
+  let calls = 0;
+  const { server, url } = await listen((_q, res) => {
+    calls++;
+    res.end();
+  });
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 1000, latencyObjectiveMs: 1, retries: 2 },
+      { ...deps, now: clockWithLatency(50) },
+    );
+    assert.equal(r.status, "degraded");
+    assert.equal(r.attempts, 1);
+    assert.equal(calls, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("timeout stays down with an objective", async () => {
+  const { server, url } = await listen(() => {});
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 1000, timeoutMs: 50, latencyObjectiveMs: 10 },
+      deps,
+    );
+    assert.equal(r.status, "down");
+    assert.equal(r.reason, "timeout after 50ms");
+  } finally {
+    await close(server);
+  }
+});
