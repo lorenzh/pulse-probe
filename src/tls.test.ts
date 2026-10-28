@@ -16,6 +16,7 @@ function makeCert(name: string, days: number): { key: string; cert: string } {
   const key = join(dir, `${name}.key`);
   const cert = join(dir, `${name}.crt`);
   execFileSync(
+    // eslint-disable-next-line sonarjs/no-os-command-from-path -- test helper needs the openssl CLI from PATH
     "openssl",
     [
       ...["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"],
@@ -30,6 +31,7 @@ async function serve(
   days: number,
   onSni?: (name: string | false) => void,
 ): Promise<{ server: tls.Server; port: number }> {
+  // eslint-disable-next-line sonarjs/pseudo-random -- unique temp file name, not security relevant
   const { key, cert } = makeCert(`c${days}-${Math.random().toString(36).slice(2)}`, days);
   const server = tls.createServer({
     key,

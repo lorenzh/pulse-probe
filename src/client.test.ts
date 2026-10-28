@@ -90,6 +90,7 @@ test("fetchChecks retries until the API answers", async () => {
         {
           id: "a",
           name: "A",
+          // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
           url: "http://x",
           intervalMs: 1000,
           timeoutMs: 500,
@@ -101,6 +102,7 @@ test("fetchChecks retries until the API answers", async () => {
         {
           id: "b",
           name: "B",
+          // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
           url: "http://y",
           intervalMs: 2000,
           state: "unknown",
@@ -127,7 +129,9 @@ test("fetchChecks retries until the API answers", async () => {
     assert.deepEqual(sleeps, [42, 42]);
     assert.equal(logs.length, 2);
     assert.deepEqual(checks, [
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
       { id: "a", name: "A", url: "http://x", intervalMs: 1000, timeoutMs: 500 },
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
       { id: "b", name: "B", url: "http://y", intervalMs: 2000 },
     ]);
   } finally {
@@ -148,9 +152,11 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
       state: "up",
       certDaysLeft: 40,
     },
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5, state: "up" },
   ];
   const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
     sleep: async () => {},
@@ -166,6 +172,7 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
       warnDays: 14,
       intervalMs: 1000,
     },
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5 },
   ]);
 });
@@ -178,9 +185,11 @@ test("fetchChecks retries on an invalid tls check", async () => {
     return Response.json(
       calls === 1
         ? [{ id: "t", name: "T", type: "tls", intervalMs: 1 }]
-        : [{ id: "h", name: "H", url: "http://x", intervalMs: 5 }],
+        : // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+          [{ id: "h", name: "H", url: "http://x", intervalMs: 5 }],
     );
   }) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
     sleep: async () => {},
@@ -193,9 +202,11 @@ test("fetchChecks retries on an invalid tls check", async () => {
 
 test("fetchChecks forwards retries and retryDelayMs", async () => {
   const body = [
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5000, retries: 2, retryDelayMs: 300 },
   ];
   const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
     sleep: async () => {},
@@ -205,8 +216,10 @@ test("fetchChecks forwards retries and retryDelayMs", async () => {
 });
 
 test("fetchChecks forwards latencyObjectiveMs", async () => {
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const body = [{ id: "h", name: "H", url: "http://x", intervalMs: 5000, latencyObjectiveMs: 500 }];
   const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
     sleep: async () => {},

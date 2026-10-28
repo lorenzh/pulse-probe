@@ -51,12 +51,14 @@ PULSE_LOCATION=c npm start
 
 ```sh
 npm ci
-npm run check   # lint, typecheck and tests
-npm run lint    # Biome format and lint check, changes nothing
+npm run check   # lint, typecheck and tests (with coverage gate)
+npm run lint    # Biome and SonarJS (ESLint) checks, changes nothing
 npm run format  # Biome: apply formatting and safe lint fixes
 ```
 
-`npm ci` installs a Lefthook pre-commit hook that runs `biome check` on the staged files and rejects the commit if they are badly formatted or fail lint. Run `npm run format` to fix them.
+`npm ci` installs a Lefthook pre-commit hook that runs `biome check` and ESLint (SonarJS) on the staged files and rejects the commit if they are badly formatted or fail lint. Run `npm run format` to fix formatting.
+
+Quality checks: Biome, SonarJS recommended rules via ESLint with cognitive complexity ≤ 15, and line coverage ≥ 80 %. Run them with `npm run lint` and `npm test`. The SonarJS toolchain lives in the `tools/sonarjs` workspace with its own TypeScript 6, because typescript-eslint does not support TypeScript 7 yet; the repository itself still uses TypeScript 7.
 
 ## TLS checks
 
