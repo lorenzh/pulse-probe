@@ -100,3 +100,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 - Entry point is `src/main.ts` (`npm start`): it fetches the checks from the API, then wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout` into the other modules.
 - Modules: `check.ts` runs one check (HTTP with retries, or TLS certificate expiry), `client.ts` talks to pulse-api (`GET /checks`, `POST /results`), `location.ts` parses `PULSE_LOCATION`, `scheduler.ts` runs each check on its interval without overlap.
 - Retries, timeouts and the schedule use the injected `sleep`, `setTimeout` and `now`; tests never wait in real time.
+
+## Shared tooling configuration
+
+The shared tooling configuration lives in `lorenzh/pulse-config`. The other pulse repositories use it through `extends` (Biome, TypeScript, Lefthook), a one-line ESLint config and `uses:` (CI). A rule change is made in `pulse-config` and reaches a target when its pin is updated. "Never weaken `biome.json`, `tsconfig.json` or CI" refers to the shared config.
