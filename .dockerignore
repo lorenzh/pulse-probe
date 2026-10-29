@@ -1,0 +1,17 @@
+.git
+.github
+.repos
+node_modules
+**/*.test.ts
+test
+**/test
+biome.json
+eslint.config.js
+lefthook*.yml
+tsconfig*.json
+.env*
+*.db
+*.db-*
+*.sqlite
+Dockerfile
+.dockerignore
