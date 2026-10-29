@@ -67,6 +67,8 @@ export interface CheckDeps {
   sleep: (ms: number) => Promise<void>;
   /** Probe location name, set on every result. */
   location: string;
+  /** Aborts in-flight HTTP requests, for shutdown. */
+  signal?: AbortSignal;
 }
 
 function errorReason(err: unknown): string {
@@ -173,7 +175,10 @@ async function attemptHttp(
     const res = await deps.fetch(url, {
       method: "GET",
       headers: { "user-agent": userAgent(deps.location) },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal:
+        deps.signal === undefined
+          ? AbortSignal.timeout(timeoutMs)
+          : AbortSignal.any([AbortSignal.timeout(timeoutMs), deps.signal]),
     });
     const isOk = res.status >= 200 && res.status < 300;
     if (isOk && keyword !== undefined) {

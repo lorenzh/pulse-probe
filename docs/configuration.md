@@ -4,12 +4,17 @@
 
 These are all the variables the code reads (`src/main.ts`).
 
-| Variable                 | Default                 | Meaning                                                                               |
-| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------- |
-| `PULSE_API_URL`          | `http://localhost:3000` | Base URL of pulse-api. Trailing slashes are removed.                                  |
-| `PULSE_LOCATION`         | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).       |
-| `PULSE_PROBE_TOKEN`      | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                 |
-| `PULSE_CHECKS_RELOAD_MS` | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, at least 5000. |
+| Variable                 | Default                 | Meaning                                                                                   |
+| ------------------------ | ----------------------- | ----------------------------------------------------------------------------------------- |
+| `PULSE_API_URL`          | `http://localhost:3000` | Base URL of pulse-api. Trailing slashes are removed.                                      |
+| `PULSE_LOCATION`         | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).           |
+| `PULSE_PROBE_TOKEN`      | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                     |
+| `PULSE_CHECKS_RELOAD_MS` | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, at least 5000.     |
+| `PULSE_LOG_LEVEL`        | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                   |
+| `PULSE_HEALTH_PORT`      | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100. |
+| `PULSE_HEALTH_HOST`      | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                           |
+
+A bad value exits with code 2 and one line `pulse-probe: <message>` naming the variable. See [operation](operation.md#exit-codes).
 
 ## Checks reload
 
