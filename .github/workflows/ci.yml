@@ -15,3 +15,10 @@ concurrency:
 jobs:
   check:
     uses: lorenzh/pulse-config/.github/workflows/check.yml@a3432e0451bb24397e77e48a5ee2e9d46913bd05
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag pulse-probe:local .

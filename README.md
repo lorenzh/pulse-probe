@@ -61,6 +61,21 @@ pulse-api accepts results only with a probe token, and the token fixes the probe
 - Rotation: the API owner adds the new token and restarts the API, then you set the new `PULSE_PROBE_TOKEN` and restart the probe. The old token is removed from the API afterwards.
 - Roll out in this order: give probes their tokens first (an old API ignores the header), then enable tokens on the API. The token travels in clear over plain HTTP, so run the API behind TLS or on a private network.
 
+## Docker
+
+The image is multi-stage on `node:24-alpine`. It holds only the production dependencies, `package.json` and `src` (no tests, no tooling), and runs as the non-root `node` user with `node src/main.ts`. It has no `EXPOSE` and no `HEALTHCHECK`, because the probe serves no HTTP. The build needs github.com for the `pulse-contract` dependency and uses no token.
+
+```sh
+docker build --tag pulse-probe:local .
+docker run --rm \
+  -e PULSE_API_URL=http://host.docker.internal:3000 \
+  -e PULSE_LOCATION=default \
+  -e PULSE_PROBE_TOKEN=<token> \
+  pulse-probe:local
+```
+
+`PULSE_API_URL`, `PULSE_LOCATION` and `PULSE_PROBE_TOKEN` are not set in the image; pass them at run time (see [Settings](#settings), which stays the single source). Without a token the container exits at startup. The probe fetches its checks once at startup, so restart the container after the API's checks change. One probe is one location: the API needs two locations reporting down before it opens an incident.
+
 ## Development
 
 ```sh
