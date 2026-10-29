@@ -147,6 +147,7 @@ test("healthz, metrics, debug logs and clean shutdown against a fake API", async
   await until(() => posted.length > 0);
   const base = `http://127.0.0.1:${port}`;
   assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
   const metrics = await (await fetch(`${base}/metrics`)).text();
   assert.match(metrics, /pulse_probe_check_status\{check="home",state="up"\} 1/);
   assert.match(metrics, /posted_total\{check="home",outcome="ok"\} 1/);
