@@ -20,9 +20,9 @@ Dropped results are not queued or retried.
 
 The probe keeps no state on disk. A restart loses nothing except the results that were dropped.
 
-## Restart after the checks change
+## After the checks change
 
-The checks are fetched once at startup. After the API's checks file changes, restart the API first, then restart each probe. A running probe never sees new, changed or removed checks.
+The API reads its checks file at startup. After the file changes, restart the API only. Each running probe reloads the checks on its own within `PULSE_CHECKS_RELOAD_MS` (default 60 s) and needs no restart.
 
 ## Changing the token or location
 

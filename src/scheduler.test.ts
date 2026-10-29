@@ -167,3 +167,77 @@ test("the next run is armed only after a retrying run finished", async () => {
   assert.equal(f.pending.size, 1);
   s.stop();
 });
+
+test("sync adds, removes and changes checks and keeps unchanged timers", async () => {
+  const f = fakeTimer();
+  const runs: string[] = [];
+  const posted: string[] = [];
+  const s = startScheduler([check, { ...check, id: "b" }], {
+    timer: f.timer,
+    now: f.now,
+    run: async (c) => {
+      runs.push(`${c.id}:${c.intervalMs}`);
+      return mk(c);
+    },
+    onResult: (r) => void posted.push(r.checkId),
+  });
+  await flush();
+  assert.deepEqual(runs, ["a:1000", "b:1000"]);
+  const timersBefore = [...f.pending.keys()];
+  s.sync([check, { ...check, id: "c" }]);
+  await flush();
+  assert.deepEqual(runs, ["a:1000", "b:1000", "c:1000"]);
+  assert.ok(timersBefore.some((id) => f.pending.has(id)));
+  await f.advance(1000);
+  assert.deepEqual(runs.slice(3).sort(), ["a:1000", "c:1000"]);
+  s.sync([
+    { ...check, intervalMs: 500 },
+    { ...check, id: "c" },
+  ]);
+  await flush();
+  assert.equal(runs.at(-1), "a:500");
+  assert.equal(f.pending.size, 2);
+  s.stop();
+});
+
+test("a removed check mid-run never posts", async () => {
+  const f = fakeTimer();
+  let release: () => void = () => {};
+  const posted: string[] = [];
+  const s = startScheduler([check], {
+    timer: f.timer,
+    now: f.now,
+    run: (c) =>
+      new Promise((resolve) => {
+        release = () => resolve(mk(c));
+      }),
+    onResult: (r) => void posted.push(r.checkId),
+  });
+  await flush();
+  s.sync([]);
+  release();
+  await flush();
+  assert.deepEqual(posted, []);
+  assert.equal(f.pending.size, 0);
+});
+
+test("a wall clock step back does not pause the scheduler", async () => {
+  const f = fakeTimer();
+  let wall = 1_000_000;
+  let runs = 0;
+  const s = startScheduler([check], {
+    timer: f.timer,
+    now: f.now,
+    run: async (c) => {
+      runs++;
+      wall -= 3_600_000;
+      return { ...mk(c), timestamp: wall };
+    },
+    onResult: () => {},
+  });
+  await flush();
+  await f.advance(1000);
+  await f.advance(1000);
+  assert.equal(runs, 3);
+  s.stop();
+});

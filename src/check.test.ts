@@ -21,7 +21,7 @@ const close = (s: http.Server): Promise<void> =>
 let t = 1000;
 const now = (): number => (t += 7);
 const sleep = async (): Promise<void> => {};
-const deps = { fetch, now, sleep, location: "default" };
+const deps = { fetch, now, monotonic: now, sleep, location: "default" };
 
 test("up on 200", async () => {
   const { server, url } = await listen((_q, res) => res.end("ok"));
@@ -99,7 +99,7 @@ test("result carries the location and the request the user agent", async () => {
   try {
     const r = await runCheck(
       { id: "a", name: "A", url, intervalMs: 1000 },
-      { fetch, now, sleep, location: "eu" },
+      { fetch, now, monotonic: now, sleep, location: "eu" },
     );
     assert.equal(r.location, "eu");
     assert.equal(agent, "pulse-probe (eu)");
@@ -201,6 +201,7 @@ test("retries: the deadline guard stops retrying near the interval end", async (
       {
         ...deps,
         now: () => clock,
+        monotonic: () => clock,
         sleep: async (ms) => {
           sleeps.push(ms);
           clock += ms;
@@ -244,7 +245,7 @@ async function objectiveRun(
         ...(objective !== undefined ? { latencyObjectiveMs: objective } : {}),
         ...(retries !== undefined ? { retries } : {}),
       },
-      { ...deps, now: clockWithLatency(latency) },
+      { ...deps, now: clockWithLatency(latency), monotonic: clockWithLatency(latency) },
     );
   } finally {
     await close(server);
@@ -291,7 +292,7 @@ test("degraded result is not retried", async () => {
   try {
     const r = await runCheck(
       { id: "a", name: "A", url, intervalMs: 1000, latencyObjectiveMs: 1, retries: 2 },
-      { ...deps, now: clockWithLatency(50) },
+      { ...deps, now: clockWithLatency(50), monotonic: clockWithLatency(50) },
     );
     assert.equal(r.status, "degraded");
     assert.equal(r.attempts, 1);
@@ -416,4 +417,55 @@ test("body timeout keeps the timeout reason", async () => {
   const f = bodyFetch(200, [timeout as unknown as Error]);
   const r = await runCheck({ ...kwCheck("zzz"), timeoutMs: 50 }, { ...deps, fetch: f.fetch });
   assert.equal(r.reason, "timeout after 50ms");
+});
+
+test("timestamp is the wall clock and latency uses the monotonic clock", async () => {
+  const { server, url } = await listen((_q, res) => res.end("ok"));
+  let mono = 50;
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 1000 },
+      {
+        ...deps,
+        now: () => 1_700_000_000_000,
+        monotonic: () => {
+          mono += 30;
+          return mono;
+        },
+      },
+    );
+    assert.equal(r.timestamp, 1_700_000_000_000);
+    assert.equal(r.latencyMs, 30);
+  } finally {
+    await close(server);
+  }
+});
+
+test("a wall clock step back does not change latency or the retry budget", async () => {
+  const { server, url } = await listen((_q, res) => {
+    res.statusCode = 500;
+    res.end();
+  });
+  let wall = 10_000;
+  let mono = 0;
+  const sleeps: number[] = [];
+  try {
+    const r = await runCheck(
+      { id: "a", name: "A", url, intervalMs: 5000, retries: 1, retryDelayMs: 100 },
+      {
+        ...deps,
+        now: () => (wall -= 1000),
+        monotonic: () => mono,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          mono += ms;
+        },
+      },
+    );
+    assert.equal(r.attempts, 2);
+    assert.equal(r.latencyMs, 0);
+    assert.deepEqual(sleeps, [100]);
+  } finally {
+    await close(server);
+  }
 });

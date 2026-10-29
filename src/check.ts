@@ -59,7 +59,10 @@ export interface CheckDeps {
   fetch: typeof fetch;
   /** Defaults to the real TLS connection. */
   tlsConnect?: TlsConnect;
+  /** Wall clock (epoch ms): the result `timestamp` and the TLS expiry comparison. */
   now: () => number;
+  /** Monotonic clock (ms): latency and the retry budget. It never steps back. */
+  monotonic: () => number;
   /** Waits `ms` milliseconds between attempts. */
   sleep: (ms: number) => Promise<void>;
   /** Probe location name, set on every result. */
@@ -83,19 +86,20 @@ function errorReason(err: unknown): string {
 export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
   const timeoutMs = check.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = deps.now();
+  const startMono = deps.monotonic();
   const finish = (
     status: Result["status"],
     statusCode: number | null,
     reason: string | null,
     certDaysLeft?: number | null,
     attempts = 1,
-    attemptStart = start,
+    attemptStart = startMono,
   ): Result => ({
     checkId: check.id,
     timestamp: start,
     status,
     statusCode,
-    latencyMs: Math.max(0, deps.now() - attemptStart),
+    latencyMs: Math.max(0, deps.monotonic() - attemptStart),
     reason,
     location: deps.location,
     attempts,
@@ -105,7 +109,7 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
   const retries = check.retries ?? 0;
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
-    const attemptStart = attempt === 1 ? start : deps.now();
+    const attemptStart = attempt === 1 ? startMono : deps.monotonic();
     const result = await attemptHttp(
       check.url,
       check.keyword,
@@ -125,7 +129,7 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
       },
     );
     if (result.status !== "down" || attempt > retries) return result;
-    if (deps.now() + retryDelayMs >= start + check.intervalMs) return result;
+    if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
 }
