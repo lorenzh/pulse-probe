@@ -57,6 +57,7 @@ export async function fetchChecks(
         if (c.latencyObjectiveMs !== undefined) check.latencyObjectiveMs = c.latencyObjectiveMs;
         if (c.retries !== undefined) check.retries = c.retries;
         if (c.retryDelayMs !== undefined) check.retryDelayMs = c.retryDelayMs;
+        if (c.keyword !== undefined) check.keyword = c.keyword;
         return check;
       });
     } catch (err) {
