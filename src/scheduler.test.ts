@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import type { Check, Result } from "@lorenzh/pulse-contract";
 import { startScheduler, type Timer } from "./scheduler.ts";
 
@@ -228,22 +228,29 @@ test("a removed check mid-run never posts", async () => {
 });
 
 test("a wall clock step back does not pause the scheduler", async () => {
-  const f = fakeTimer();
-  let wall = 1_000_000;
-  let runs = 0;
-  const s = startScheduler([check], {
-    timer: f.timer,
-    now: f.now,
-    run: async (c) => {
-      runs++;
-      wall -= 3_600_000;
-      return { ...mk(c), timestamp: wall };
-    },
-    onResult: () => {},
-  });
-  await flush();
-  await f.advance(1000);
-  await f.advance(1000);
-  assert.equal(runs, 3);
-  s.stop();
+  // Steps the real Date.now back by an hour on every run. A scheduler that read it would stall.
+  mock.timers.enable({ apis: ["Date"], now: 10_000_000 });
+  try {
+    const f = fakeTimer();
+    let runs = 0;
+    const s = startScheduler([check], {
+      timer: f.timer,
+      now: f.now,
+      run: async (c) => {
+        runs++;
+        const before = Date.now();
+        mock.timers.setTime(before - 3_600_000);
+        assert.ok(Date.now() < before);
+        return { ...mk(c), timestamp: Date.now() };
+      },
+      onResult: () => {},
+    });
+    await flush();
+    await f.advance(1000);
+    await f.advance(1000);
+    assert.equal(runs, 3);
+    s.stop();
+  } finally {
+    mock.timers.reset();
+  }
 });

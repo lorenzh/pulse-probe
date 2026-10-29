@@ -7,7 +7,7 @@ The probe writes to standard error, each line prefixed with `[probe] `. There is
 | Line                                                                                   | Meaning                                              |
 | -------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | `running <n> check(s) against <url> from location <location>`                          | Startup finished fetching the checks.                |
-| `fetching checks failed: <reason>; retrying in 2000ms`                                 | The API is unreachable or answered badly at startup. |
+| `fetching checks failed: <reason>; retrying in 10000ms`                                | The API is unreachable or answered badly at startup. |
 | `dropping result for <id>: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION` | The API answered 401 or 403.                         |
 | `dropping result for <id>: API answered HTTP <code>`                                   | The API did not answer 204.                          |
 | `dropping result for <id>: <error>`                                                    | The post failed (network error or 10 s timeout).     |

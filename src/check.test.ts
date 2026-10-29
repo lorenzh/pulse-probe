@@ -464,10 +464,10 @@ test("a wall clock step back does not change latency or the retry budget", async
   const sleeps: number[] = [];
   try {
     const r = await runCheck(
-      { id: "a", name: "A", url, intervalMs: 5000, retries: 1, retryDelayMs: 100 },
+      { id: "a", name: "A", url, intervalMs: 3500, retries: 5, retryDelayMs: 1000 },
       {
         ...deps,
-        now: () => (wall -= 1000),
+        now: () => (wall -= 3_600_000),
         monotonic: () => mono,
         sleep: async (ms) => {
           sleeps.push(ms);
@@ -475,9 +475,11 @@ test("a wall clock step back does not change latency or the retry budget", async
         },
       },
     );
-    assert.equal(r.attempts, 2);
+    // The budget follows the monotonic clock: 0, 1000, 2000 and 3000 ms. A wall clock that
+    // keeps stepping back would never use it up and allow all six attempts.
+    assert.equal(r.attempts, 4);
     assert.equal(r.latencyMs, 0);
-    assert.deepEqual(sleeps, [100]);
+    assert.deepEqual(sleeps, [1000, 1000, 1000]);
   } finally {
     await close(server);
   }
