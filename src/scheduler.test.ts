@@ -255,3 +255,31 @@ test("a wall clock step back does not pause the scheduler", async () => {
     mock.timers.reset();
   }
 });
+
+test("never passes a delay above the timer cap", async () => {
+  const delays: number[] = [];
+  const f = fakeTimer();
+  const timer: Timer = {
+    setTimeout(fn, ms) {
+      delays.push(ms);
+      return f.timer.setTimeout(fn, ms);
+    },
+    clearTimeout: f.timer.clearTimeout,
+  };
+  const runs: string[] = [];
+  const s = startScheduler([{ ...check, intervalMs: 2 ** 31 + 5 }], {
+    timer,
+    now: f.now,
+    run: async (c) => {
+      runs.push(c.id);
+      return mk(c);
+    },
+    onResult: () => undefined,
+  });
+  await flush();
+  assert.equal(runs.length, 1);
+  assert.deepEqual(delays, [2_147_483_647]);
+  await f.advance(1000);
+  assert.equal(runs.length, 1);
+  s.stop();
+});
