@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { Result } from "@lorenzh/pulse-contract";
+import { MAX_TIMER_MS, type Result } from "@lorenzh/pulse-contract";
 import type { ProbeCheck } from "./client.ts";
 
 export interface Timer {
@@ -49,7 +49,7 @@ export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Sched
       deps.onError?.(check, err);
     }
     if (!isCurrent()) return;
-    const delay = Math.max(0, check.intervalMs - (deps.now() - started));
+    const delay = Math.min(MAX_TIMER_MS, Math.max(0, check.intervalMs - (deps.now() - started)));
     entry.handle = deps.timer.setTimeout(() => void tick(entry), delay);
   };
 

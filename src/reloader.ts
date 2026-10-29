@@ -1,3 +1,4 @@
+import { MAX_TIMER_MS } from "@lorenzh/pulse-contract";
 import type { ProbeCheck } from "./client.ts";
 import type { Timer } from "./scheduler.ts";
 
@@ -31,7 +32,7 @@ export function startReloader(deps: ReloaderDeps): Reloader {
 
   const schedule = (delay: number): void => {
     if (handle !== undefined) deps.timer.clearTimeout(handle);
-    handle = deps.timer.setTimeout(() => void run(), delay);
+    handle = deps.timer.setTimeout(() => void run(), Math.min(MAX_TIMER_MS, delay));
   };
 
   const run = async (): Promise<void> => {
