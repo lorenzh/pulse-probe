@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
+import { runCheck } from "./check.ts";
 import { fetchChecks, postResult } from "./client.ts";
 
 const result: Result = {
@@ -106,7 +107,7 @@ test("fetchChecks retries until the API answers", async () => {
           name: "A",
           // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
           url: "http://x",
-          intervalMs: 1000,
+          intervalMs: 60_000,
           timeoutMs: 500,
           state: "up",
           consecutiveDown: 0,
@@ -144,7 +145,7 @@ test("fetchChecks retries until the API answers", async () => {
     assert.equal(logs.length, 2);
     assert.deepEqual(checks, [
       // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-      { id: "a", name: "A", url: "http://x", intervalMs: 1000, timeoutMs: 500 },
+      { id: "a", name: "A", url: "http://x", intervalMs: 60_000, timeoutMs: 500 },
       // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
       { id: "b", name: "B", url: "http://y", intervalMs: 2000 },
     ]);
@@ -162,7 +163,7 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
       host: "example.com",
       port: 443,
       warnDays: 14,
-      intervalMs: 1000,
+      intervalMs: 60_000,
       state: "up",
       certDaysLeft: 40,
     },
@@ -184,7 +185,7 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
       host: "example.com",
       port: 443,
       warnDays: 14,
-      intervalMs: 1000,
+      intervalMs: 60_000,
     },
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5 },
@@ -278,4 +279,39 @@ test("fetchChecks sends no Authorization header", async () => {
   } finally {
     await close(server);
   }
+});
+
+test("fetchChecks keeps the keyword so runCheck marks a body without it down", async () => {
+  const fakeFetch: typeof fetch = async (input) => {
+    if (String(input).endsWith("/checks")) {
+      return Response.json([
+        {
+          id: "a",
+          name: "A",
+          url: "http://site.test/",
+          intervalMs: 60_000,
+          keyword: "Welcome",
+          retries: 1,
+        },
+      ]);
+    }
+    return new Response("maintenance", { status: 200 });
+  };
+  const checks = await fetchChecks("http://api.test", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: () => {},
+  });
+  const [check] = checks;
+  assert.ok(check);
+  const r = await runCheck(check, {
+    fetch: fakeFetch,
+    now: () => 0,
+    sleep: async () => {},
+    location: "default",
+  });
+  assert.equal(r.status, "down");
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.reason, 'keyword "Welcome" not found');
+  assert.equal(r.attempts, 2);
 });
