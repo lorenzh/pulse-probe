@@ -23,7 +23,11 @@ Action: fix the URL or start the API. The probe retries on its own. After the fi
 
 ## `skipping invalid check: ...`
 
-Cause: the API sent a check with a missing `id`, a missing or non-positive `intervalMs`, a missing `url`, or invalid TLS settings (`invalid tls check <id>`). The probe skips it and runs the others.
+Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be a finite number > 0`. The probe skips it and runs the others.
+
+## `contract version mismatch: ...`
+
+Cause: the API reports a different `x-pulse-contract` version than this probe was built for. The probe treats the fetch as failed and retries. Update the probe or the API so both use the same contract version. A mismatch on the `POST /results` response is logged and the result is handled as usual.
 Action: fix the check in the API's checks file and restart the API. The probe picks it up on its next reload.
 
 ## `dropping result for <id>: API answered HTTP <code>`

@@ -17,7 +17,7 @@ These are all the variables the code reads (`src/main.ts`).
 - A value below 5000 or one that is not an integer makes the probe exit at startup with `PULSE_CHECKS_RELOAD_MS must be an integer of at least 5000`.
 - A failed reload keeps the running checks, is logged and is retried after 10 seconds (or the interval, if shorter).
 - When the API answers 404 for a result (the check is unknown or no longer active), the probe reloads at once, at most every 5 seconds.
-- Each `GET /checks` request times out after 10 seconds (headers and body). Checks with an invalid `id`, `intervalMs`, `url` or TLS settings are skipped and logged.
+- Each `GET /checks` request times out after 10 seconds (headers and body). Each check is validated with the validators of pulse-contract. An invalid check is skipped and logged with the contract's error, for example `checks[3].intervalMs: must be a finite number > 0`. The probe also reads the `x-pulse-contract` header of the response: a missing header is logged once, a different version counts as a failed fetch and is retried. A version mismatch on the `POST /results` response is logged only.
 
 ## Location
 
@@ -74,7 +74,7 @@ A check with `type: "tls"` has `host`, `port` and `warnDays`, and optionally `ti
 - A connect or handshake error is `down` with the error code, or `timeout after <n>ms`.
 - Otherwise it is `up`.
 - The chain and the hostname are not verified (`rejectUnauthorized: false`). Only the leaf's expiry is judged.
-- A TLS check with an empty `host` or a non-integer `port` or `warnDays` makes the startup fetch fail with `invalid tls check <id>`, and the probe keeps retrying.
+- A TLS check with an empty `host` or a non-integer `port` or `warnDays` is skipped and logged like any invalid check.
 
 ### Retries
 

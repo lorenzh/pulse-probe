@@ -1,4 +1,10 @@
-import type { Check, ChecksResponse, Result } from "@lorenzh/pulse-contract";
+import {
+  type Check,
+  checkWireVersion,
+  type Result,
+  validateCheck,
+  WIRE_VERSION_HEADER,
+} from "@lorenzh/pulse-contract";
 
 export interface ClientDeps {
   fetch: typeof fetch;
@@ -21,24 +27,9 @@ function join(baseUrl: string, path: string): string {
   return baseUrl.slice(0, end) + path;
 }
 
-/** Validates one check from the API. Returns the check, or the reason it is invalid. */
-function parseCheck(raw: unknown): { check: Check } | { reason: string } {
-  if (typeof raw !== "object" || raw === null) return { reason: "not an object" };
-  // Trust boundary: JSON from the API, narrowed by the field checks below.
-  const c = raw as ChecksResponse[number];
-  if (typeof c.id !== "string" || c.id === "") return { reason: "id missing" };
-  if (typeof c.intervalMs !== "number" || !Number.isFinite(c.intervalMs) || c.intervalMs <= 0) {
-    return { reason: `invalid intervalMs for check ${c.id}` };
-  }
+/** Copies the fields of a validated check, dropping the state fields the API adds. */
+function toCheck(c: Check): Check {
   if (c.type === "tls") {
-    if (
-      typeof c.host !== "string" ||
-      c.host === "" ||
-      !Number.isInteger(c.port) ||
-      !Number.isInteger(c.warnDays)
-    ) {
-      return { reason: `invalid tls check ${c.id}` };
-    }
     const check: Check = {
       id: c.id,
       name: c.name,
@@ -49,17 +40,19 @@ function parseCheck(raw: unknown): { check: Check } | { reason: string } {
       intervalMs: c.intervalMs,
     };
     if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
-    return { check };
+    return check;
   }
-  if (typeof c.url !== "string" || c.url === "") return { reason: `invalid url for check ${c.id}` };
   const check: Check = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
   if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
   if (c.latencyObjectiveMs !== undefined) check.latencyObjectiveMs = c.latencyObjectiveMs;
   if (c.retries !== undefined) check.retries = c.retries;
   if (c.retryDelayMs !== undefined) check.retryDelayMs = c.retryDelayMs;
   if (c.keyword !== undefined) check.keyword = c.keyword;
-  return { check };
+  return check;
 }
+
+// Loggers that already reported a missing version header: the reload loop must not repeat it.
+const warnedAbsent = new WeakSet<object>();
 
 /** Rejects when `signal` aborts, even if the pending work ignores the signal. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -97,16 +90,25 @@ export async function loadChecks(
         await res.body?.cancel().catch(() => {});
         throw new Error(`HTTP ${res.status}`);
       }
+      const version = checkWireVersion(res.headers.get(WIRE_VERSION_HEADER));
+      if (version.status === "mismatch") {
+        await res.body?.cancel().catch(() => {});
+        throw new Error(`contract version mismatch: ${version.error}`);
+      }
+      if (version.status === "absent" && !warnedAbsent.has(deps.log)) {
+        warnedAbsent.add(deps.log);
+        deps.log(`API sent no ${WIRE_VERSION_HEADER} header; cannot check the contract version`);
+      }
       return res.json();
     })(),
     signal,
   );
   if (!Array.isArray(body)) throw new Error("unexpected response");
   const checks: Check[] = [];
-  for (const raw of body as unknown[]) {
-    const parsed = parseCheck(raw);
-    if ("check" in parsed) checks.push(parsed.check);
-    else deps.log(`skipping invalid check: ${parsed.reason}`);
+  for (const [i, raw] of (body as unknown[]).entries()) {
+    const parsed = validateCheck(raw, `checks[${i}]`);
+    if (parsed.ok) checks.push(toCheck(parsed.value));
+    else deps.log(`skipping invalid check: ${parsed.error}`);
   }
   return checks;
 }
@@ -144,6 +146,10 @@ export async function postResult(
     });
     // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
+    const version = checkWireVersion(res.headers.get(WIRE_VERSION_HEADER));
+    if (version.status === "mismatch") {
+      deps.log(`API answered POST /results with a contract version mismatch: ${version.error}`);
+    }
     if (res.status === 401 || res.status === 403) {
       deps.log(
         `dropping result for ${result.checkId}: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`,
