@@ -32,7 +32,13 @@ const close = (s: http.Server): Promise<void> =>
   });
 
 test("postResult sends Result JSON", async () => {
-  let seen: { method?: string; url?: string; type?: string; auth?: string; body?: string } = {};
+  let seen: {
+    method?: string | undefined;
+    url?: string | undefined;
+    type?: string | undefined;
+    auth?: string | undefined;
+    body?: string | undefined;
+  } = {};
   const { server, url } = await listen((q, res) => {
     let body = "";
     q.on("data", (d) => (body += d));
@@ -97,7 +103,8 @@ test("fetchChecks retries until the API answers", async () => {
     hits++;
     if (hits < 3) {
       res.statusCode = 503;
-      return void res.end();
+      res.end();
+      return;
     }
     res.setHeader("content-type", "application/json");
     res.setHeader("x-pulse-contract", "1");
@@ -136,7 +143,9 @@ test("fetchChecks retries until the API answers", async () => {
       url,
       {
         fetch,
-        sleep: async (ms) => void sleeps.push(ms),
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
         log: (m) => logs.push(m),
       },
       42,
@@ -278,7 +287,9 @@ test("fetchChecks times out on stalled headers and retries", async () => {
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const p = fetchChecks("http://api", {
     fetch: fakeFetch,
-    sleep: async (ms) => void sleeps.push(ms),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+    },
     log: (m) => logs.push(m),
     timeoutSignal: () => {
       const c = new AbortController();
@@ -440,7 +451,9 @@ test("fetchChecks accepts a matching contract version without logging", async ()
 
 test("loadChecks logs an absent version header once per logger and continues", async () => {
   const logs: string[] = [];
-  const log = (m: string): void => void logs.push(m);
+  const log = (m: string): void => {
+    logs.push(m);
+  };
   const fakeFetch = (async () => Response.json(okBody)) as unknown as typeof fetch;
   assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
   assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
@@ -458,7 +471,13 @@ test("fetchChecks treats a contract version mismatch as a failed fetch and retri
   const sleeps: number[] = [];
   const checks = await fetchChecks(
     "https://api",
-    { fetch: fakeFetch, sleep: async (ms) => void sleeps.push(ms), log: (m) => logs.push(m) },
+    {
+      fetch: fakeFetch,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      log: (m) => logs.push(m),
+    },
     7,
   );
   assert.equal(calls, 2);

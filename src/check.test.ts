@@ -76,7 +76,10 @@ test("down on connection refused", async () => {
 
 test("redirect is followed to 200", async () => {
   const { server, url } = await listen((q, res) => {
-    if (q.url === "/final") return void res.end("ok");
+    if (q.url === "/final") {
+      res.end("ok");
+      return;
+    }
     res.statusCode = 302;
     res.setHeader("location", "/final");
     res.end();
@@ -136,7 +139,12 @@ test("retries: success on the second attempt is up", async () => {
   try {
     const r = await runCheck(
       { id: "a", name: "A", url, intervalMs: 100_000, retries: 1 },
-      { ...deps, sleep: async (ms) => void sleeps.push(ms) },
+      {
+        ...deps,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
     );
     assert.equal(r.status, "up");
     assert.equal(r.statusCode, 200);
@@ -160,7 +168,12 @@ test("retries: always failing reports the last attempt and waits retryDelayMs", 
   try {
     const r = await runCheck(
       { id: "a", name: "A", url, intervalMs: 100_000, retries: 1, retryDelayMs: 250 },
-      { ...deps, sleep: async (ms) => void sleeps.push(ms) },
+      {
+        ...deps,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
     );
     assert.equal(r.status, "down");
     assert.equal(r.statusCode, 503);

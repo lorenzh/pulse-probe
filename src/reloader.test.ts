@@ -28,7 +28,9 @@ function setup(load: () => Promise<Check[]>) {
     timer,
     now: () => clock,
     load,
-    apply: (c) => void applied.push(c),
+    apply: (c) => {
+      applied.push(c);
+    },
     log: (m) => logs.push(m),
     intervalMs: 60_000,
     retryMs: 10_000,
