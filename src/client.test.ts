@@ -31,22 +31,29 @@ const close = (s: http.Server): Promise<void> =>
   });
 
 test("postResult sends Result JSON", async () => {
-  let seen: { method?: string; url?: string; type?: string; body?: string } = {};
+  let seen: { method?: string; url?: string; type?: string; auth?: string; body?: string } = {};
   const { server, url } = await listen((q, res) => {
     let body = "";
     q.on("data", (d) => (body += d));
     q.on("end", () => {
-      seen = { method: q.method, url: q.url, type: q.headers["content-type"], body };
+      seen = {
+        method: q.method,
+        url: q.url,
+        type: q.headers["content-type"],
+        auth: q.headers.authorization,
+        body,
+      };
       res.statusCode = 204;
       res.end();
     });
   });
   try {
-    const ok = await postResult(url + "/", result, { fetch, log: () => {} });
+    const ok = await postResult(url + "/", result, { fetch, log: () => {}, token: "tok-secret" });
     assert.equal(ok, true);
     assert.equal(seen.method, "POST");
     assert.equal(seen.url, "/results");
     assert.equal(seen.type, "application/json");
+    assert.equal(seen.auth, "Bearer tok-secret");
     assert.deepEqual(JSON.parse(seen.body!), result);
   } finally {
     await close(server);
@@ -57,7 +64,11 @@ test("postResult survives an unreachable API", async () => {
   const { server, url } = await listen(() => {});
   await close(server);
   const logs: string[] = [];
-  const ok = await postResult(url, result, { fetch, log: (m) => logs.push(m) });
+  const ok = await postResult(url, result, {
+    fetch,
+    log: (m) => logs.push(m),
+    token: "tok-secret",
+  });
   assert.equal(ok, false);
   assert.equal(logs.length, 1);
 });
@@ -69,7 +80,10 @@ test("postResult drops on non-204", async () => {
   });
   try {
     const logs: string[] = [];
-    assert.equal(await postResult(url, result, { fetch, log: (m) => logs.push(m) }), false);
+    assert.equal(
+      await postResult(url, result, { fetch, log: (m) => logs.push(m), token: "tok-secret" }),
+      false,
+    );
     assert.equal(logs.length, 1);
   } finally {
     await close(server);
@@ -226,4 +240,42 @@ test("fetchChecks forwards latencyObjectiveMs", async () => {
     log: () => {},
   });
   assert.deepEqual(checks, body);
+});
+
+for (const status of [401, 403]) {
+  test(`postResult logs a distinct message on HTTP ${status} without the token`, async () => {
+    const { server, url } = await listen((_q, res) => {
+      res.statusCode = status;
+      res.end("{}");
+    });
+    try {
+      const logs: string[] = [];
+      const ok = await postResult(url, result, {
+        fetch,
+        log: (m) => logs.push(m),
+        token: "tok-secret",
+      });
+      assert.equal(ok, false);
+      assert.equal(logs.length, 1);
+      assert.match(logs[0] ?? "", /token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION/);
+      assert.doesNotMatch(logs[0] ?? "", /tok-secret/);
+    } finally {
+      await close(server);
+    }
+  });
+}
+
+test("fetchChecks sends no Authorization header", async () => {
+  let auth: string | undefined = "unset";
+  const { server, url } = await listen((q, res) => {
+    auth = q.headers.authorization;
+    res.setHeader("content-type", "application/json");
+    res.end("[]");
+  });
+  try {
+    await fetchChecks(url, { fetch, sleep: async () => {}, log: () => {} });
+    assert.equal(auth, undefined);
+  } finally {
+    await close(server);
+  }
 });

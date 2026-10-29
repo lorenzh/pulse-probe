@@ -72,17 +72,23 @@ export async function fetchChecks(
 export async function postResult(
   baseUrl: string,
   result: Result,
-  deps: Pick<ClientDeps, "fetch" | "log">,
+  deps: Pick<ClientDeps, "fetch" | "log"> & { token: string },
 ): Promise<boolean> {
   try {
     const res = await deps.fetch(join(baseUrl, "/results"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${deps.token}` },
       body: JSON.stringify(result),
       signal: AbortSignal.timeout(10_000),
     });
     // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
+    if (res.status === 401 || res.status === 403) {
+      deps.log(
+        `dropping result for ${result.checkId}: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`,
+      );
+      return false;
+    }
     if (res.status !== 204) {
       deps.log(`dropping result for ${result.checkId}: API answered HTTP ${res.status}`);
       return false;

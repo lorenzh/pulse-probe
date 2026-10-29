@@ -3,10 +3,18 @@ import { runCheck } from "./check.ts";
 import { fetchChecks, postResult } from "./client.ts";
 import { parseLocation } from "./location.ts";
 import { startScheduler } from "./scheduler.ts";
+import { parseToken } from "./token.ts";
 
 const apiUrl = process.env.PULSE_API_URL ?? "http://localhost:3000";
 const location = parseLocation(process.env.PULSE_LOCATION);
 const log = (message: string): void => console.error(`[probe] ${message}`);
+let token: string;
+try {
+  token = parseToken(process.env.PULSE_PROBE_TOKEN);
+} catch (err) {
+  log(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 const now = (): number => Date.now();
 
 const checks = await fetchChecks(apiUrl, { fetch, sleep: (ms) => sleep(ms), log });
@@ -20,7 +28,7 @@ const scheduler = startScheduler(checks, {
   now,
   run: (check) => runCheck(check, { fetch, now, sleep: (ms) => sleep(ms), location }),
   onResult: async (result) => {
-    await postResult(apiUrl, result, { fetch, log });
+    await postResult(apiUrl, result, { fetch, log, token });
   },
   onError: (check, err) => log(`check ${check.id} failed unexpectedly: ${String(err)}`),
 });
