@@ -38,19 +38,28 @@ export function parseHealthSettings(
 
 function handle(deps: HealthDeps, req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = (req.url ?? "").split("?")[0];
-  if (req.method !== "GET" || (path !== "/healthz" && path !== "/metrics")) {
-    res.writeHead(404, { "content-type": "text/plain" }).end("not found\n");
+  if (req.method !== "GET") {
+    notFound(res);
     return;
   }
-  if (path === "/metrics") {
+  if (path === "/healthz") {
+    // Liveness: the listener answers, so the process is alive. Ignores readiness.
+    res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
+  } else if (path === "/readyz") {
+    const readiness = deps.readiness();
+    if (readiness.ready) res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
+    else res.writeHead(503, { "content-type": "text/plain" }).end(`${readiness.reason}\n`);
+  } else if (path === "/metrics") {
     res
       .writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" })
       .end(deps.renderMetrics());
-    return;
+  } else {
+    notFound(res);
   }
-  const readiness = deps.readiness();
-  if (readiness.ready) res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
-  else res.writeHead(503, { "content-type": "text/plain" }).end(`${readiness.reason}\n`);
+}
+
+function notFound(res: http.ServerResponse): void {
+  res.writeHead(404, { "content-type": "text/plain" }).end("not found\n");
 }
 
 function closeServer(server: http.Server): Promise<void> {
@@ -60,7 +69,7 @@ function closeServer(server: http.Server): Promise<void> {
   });
 }
 
-/** Serves GET /healthz and GET /metrics. Rejects when the port cannot be bound. */
+/** Serves GET /healthz (liveness), GET /readyz (readiness) and GET /metrics. Rejects when the port cannot be bound. */
 export function startHealthServer(
   settings: HealthSettings,
   deps: HealthDeps,

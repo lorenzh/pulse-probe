@@ -22,7 +22,7 @@ PULSE_LOCATION=b PULSE_PROBE_TOKEN='<token-b>' npm start
 
 ## Docker
 
-The image is multi-stage on `node:24-alpine`. It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `node` user with `node src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` on `/healthz`. It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` dependency and uses no token.
+The image is multi-stage on `node:24-alpine`. It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `node` user with `node src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` on `/healthz` (liveness; `/readyz` reports readiness). It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` dependency and uses no token.
 
 ```sh
 docker build --tag pulse-probe:local .

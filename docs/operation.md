@@ -37,9 +37,10 @@ Between steps 1 and 3 the old token still works. Roll out in this order when you
 
 ## Health and metrics
 
-Set `PULSE_HEALTH_PORT` to start an HTTP listener (off by default). The Docker image enables it on port 9100 and has a `HEALTHCHECK` that fetches `/healthz`. Do not publish the port: `/metrics` holds check ids.
+Set `PULSE_HEALTH_PORT` to start an HTTP listener (off by default). The Docker image enables it on port 9100 and has a `HEALTHCHECK` that fetches `/healthz` (liveness). Do not publish the port: `/metrics` holds check ids.
 
-- `GET /healthz`: `200 ok` once the checks were fetched at least once and the probe is not shutting down, else `503` with a short reason. A failed post does not make the probe unhealthy.
+- `GET /healthz`: liveness. `200 ok` whenever the listener serves, also while the probe shuts down, until the listener closes. The Docker `HEALTHCHECK` uses it. **Breaking change of meaning:** it used to report readiness; use `/readyz` for that.
+- `GET /readyz`: readiness. `200 ok` once the checks were fetched at least once and the probe is not shutting down, else `503` with a short reason. A failed post does not make the probe unready.
 - `GET /metrics`: Prometheus text. Counters reset on restart. Never a token, URL or keyword.
 
 | Series                                            | Type      | Meaning                                                                                            |
@@ -62,7 +63,7 @@ Earlier versions exited with 1 on a bad token or reload interval.
 
 ## Stopping
 
-The signal handlers are registered before anything else. On `SIGINT` or `SIGTERM` the probe turns `/healthz` to 503, stops the reloader and scheduler, aborts the running checks and posts, closes the health listener and exits with code 0. This also works while the startup fetch is still retrying. Waiting for in-flight work is bounded by 5 s; when the bound is hit the probe logs a warning and still exits 0. A second signal has no extra effect.
+The signal handlers are registered before anything else. On `SIGINT` or `SIGTERM` the probe turns `/readyz` to 503 (`/healthz` stays 200), stops the reloader and scheduler, aborts the running checks and posts, closes the health listener and exits with code 0. This also works while the startup fetch is still retrying. Waiting for in-flight work is bounded by 5 s; when the bound is hit the probe logs a warning and still exits 0. A second signal has no extra effect.
 
 ## Locations
 

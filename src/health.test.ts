@@ -10,7 +10,7 @@ test("parseHealthSettings: unset means no listener, bad port throws", () => {
   assert.throws(() => parseHealthSettings("70000", undefined), /PULSE_HEALTH_PORT/);
 });
 
-test("health server answers /healthz by readiness and serves /metrics", async () => {
+test("health server answers /readyz by readiness, /healthz always, and serves /metrics", async () => {
   let readiness: Readiness = { ready: false, reason: "checks not loaded yet" };
   const server = await startHealthServer(
     { port: 0, host: "127.0.0.1" },
@@ -18,17 +18,35 @@ test("health server answers /healthz by readiness and serves /metrics", async ()
   );
   try {
     const base = `http://127.0.0.1:${server.port}`;
-    const down = await fetch(`${base}/healthz`);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    const down = await fetch(`${base}/readyz`);
     assert.equal(down.status, 503);
     assert.equal(await down.text(), "checks not loaded yet\n");
     readiness = { ready: true };
-    const up = await fetch(`${base}/healthz`);
+    const up = await fetch(`${base}/readyz`);
     assert.equal(up.status, 200);
     assert.equal(await up.text(), "ok\n");
     const metrics = await fetch(`${base}/metrics`);
     assert.equal(metrics.status, 200);
     assert.equal(await metrics.text(), "pulse_up 1\n");
     assert.equal((await fetch(`${base}/other`)).status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("/healthz stays 200 during shutdown while /readyz is 503", async () => {
+  const readiness: Readiness = { ready: false, reason: "shutting down" };
+  const server = await startHealthServer(
+    { port: 0, host: "127.0.0.1" },
+    { readiness: () => readiness, renderMetrics: () => "" },
+  );
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    const ready = await fetch(`${base}/readyz`);
+    assert.equal(ready.status, 503);
+    assert.equal(await ready.text(), "shutting down\n");
   } finally {
     await server.close();
   }
