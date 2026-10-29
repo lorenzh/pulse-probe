@@ -314,3 +314,106 @@ test("timeout stays down with an objective", async () => {
     await close(server);
   }
 });
+
+function bodyFetch(
+  status: number,
+  chunks: Array<Uint8Array | Error>,
+  state = { cancelled: false, pulled: 0 },
+) {
+  const impl = async (): Promise<Response> => {
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        state.pulled++;
+        const c = chunks[i++];
+        if (c === undefined) controller.close();
+        else if (c instanceof Error) controller.error(c);
+        else controller.enqueue(c);
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+    return new Response(body, { status });
+  };
+  return { fetch: impl as typeof fetch, state };
+}
+const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+const kwCheck = (keyword?: string, retries?: number) => ({
+  id: "k",
+  name: "K",
+  url: "http://x.test",
+  intervalMs: 100_000,
+  retryDelayMs: 0,
+  ...(keyword !== undefined ? { keyword } : {}),
+  ...(retries !== undefined ? { retries } : {}),
+});
+
+test("keyword present is up and cancels the rest", async () => {
+  const f = bodyFetch(200, [enc("hello wor"), enc("ld"), enc("more"), enc("more")]);
+  const r = await runCheck(kwCheck("world"), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "up");
+  assert.equal(r.statusCode, 200);
+  assert.ok(f.state.cancelled);
+  assert.ok(f.state.pulled < 5);
+});
+
+test("keyword absent is down, retried with attempts counted", async () => {
+  const f = bodyFetch(200, [enc("maintenance")]);
+  const r = await runCheck(kwCheck("x", 2), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "down");
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.reason, 'keyword "x" not found');
+  assert.equal(r.attempts, 3);
+});
+
+test("keyword is case sensitive", async () => {
+  const f = bodyFetch(200, [enc("Hello")]);
+  const r = await runCheck(kwCheck("hello"), { ...deps, fetch: f.fetch });
+  assert.equal(r.reason, 'keyword "hello" not found');
+});
+
+test("keyword non-2xx keeps HTTP reason", async () => {
+  const f = bodyFetch(503, [enc("hello")]);
+  const r = await runCheck(kwCheck("hello"), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "down");
+  assert.equal(r.reason, "HTTP 503");
+});
+
+test("keyword beyond the 1 MiB limit is not found", async () => {
+  const f = bodyFetch(200, [new Uint8Array(1_048_576).fill(97), enc("needle")]);
+  const r = await runCheck(kwCheck("needle"), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "down");
+  assert.equal(r.reason, 'keyword "needle" not found');
+  assert.ok(f.state.cancelled);
+});
+
+test("keyword straddling the limit is not found", async () => {
+  const f = bodyFetch(200, [new Uint8Array(1_048_574).fill(97), enc("needle")]);
+  const r = await runCheck(kwCheck("needle"), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "down");
+});
+
+test("no keyword does not read the body", async () => {
+  const f = bodyFetch(200, [enc("a"), enc("b")]);
+  const r = await runCheck(kwCheck(), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "up");
+  assert.ok(f.state.cancelled);
+  assert.ok(f.state.pulled <= 1);
+});
+
+test("body read error keeps the error reason", async () => {
+  const err = Object.assign(new Error("boom"), { code: "ECONNRESET" });
+  const f = bodyFetch(200, [enc("a"), err]);
+  const r = await runCheck(kwCheck("zzz"), { ...deps, fetch: f.fetch });
+  assert.equal(r.status, "down");
+  assert.equal(r.statusCode, null);
+  assert.equal(r.reason, "ECONNRESET");
+});
+
+test("body timeout keeps the timeout reason", async () => {
+  const timeout = new DOMException("t", "TimeoutError");
+  const f = bodyFetch(200, [timeout as unknown as Error]);
+  const r = await runCheck({ ...kwCheck("zzz"), timeoutMs: 50 }, { ...deps, fetch: f.fetch });
+  assert.equal(r.reason, "timeout after 50ms");
+});

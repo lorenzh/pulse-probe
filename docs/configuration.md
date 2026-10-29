@@ -35,11 +35,24 @@ The probe has no check configuration of its own. It fetches the checks once at s
 
 ### HTTP checks
 
-Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `latencyObjectiveMs`, `retries`, `retryDelayMs`.
+Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `latencyObjectiveMs`, `retries`, `retryDelayMs`, `keyword`.
 
 - Each run is an HTTP GET. Redirects are followed. The default timeout is 5000 ms.
 - A 2xx response is `up`. Anything else is `down` with reason `HTTP <code>`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
 - If `latencyObjectiveMs` is set and the measured `latencyMs` is strictly above it, the result is `degraded` with reason `latency <n>ms over objective <m>ms`. Equal to the objective is still `up`. An objective at or above `timeoutMs` can never be reached, so the check is never degraded.
+
+### Keyword
+
+With `keyword` set, a 2xx answer is `up` only when its body contains the keyword.
+
+- The match is a plain, case-sensitive substring on the body of the final response (after redirects). The body is decoded as UTF-8. There is no content-type filter.
+- The probe reads at most 1 MiB (1,048,576 bytes) of the body and stops as soon as the keyword is found. A keyword that is not found within that limit, including one that straddles it, counts as not found.
+- A missing keyword is `down` (never `degraded`) with the 2xx `statusCode` and reason `keyword "<text>" not found`. Retries apply as for any failed attempt.
+- A non-2xx answer keeps reason `HTTP <code>`. A timeout or read error while reading the body keeps the timeout or error reason.
+- `latencyMs` includes the time to read the body, so a found keyword can still lead to `degraded`.
+- Without `keyword` the body is not read. TLS checks have no keyword.
+
+Example: `{ "id": "home", "name": "Home", "url": "https://example.com", "intervalMs": 60000, "keyword": "Welcome" }`
 
 ### TLS checks
 

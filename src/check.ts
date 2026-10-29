@@ -8,6 +8,9 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 
 export const DEFAULT_RETRY_DELAY_MS = 1000;
 
+/** Most body bytes read when an HTTP check has a `keyword`. */
+export const MAX_KEYWORD_BODY_BYTES = 1_048_576;
+
 export const DAY_MS = 86_400_000;
 
 export interface TlsConnectOptions {
@@ -103,26 +106,61 @@ export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? start : deps.now();
-    const result = await attemptHttp(check.url, deps, timeoutMs, (status, code, reason) => {
-      const r = finish(status, code, reason, undefined, attempt, attemptStart);
-      const objective = check.latencyObjectiveMs;
-      if (status === "up" && objective !== undefined && r.latencyMs > objective) {
-        return {
-          ...r,
-          status: "degraded",
-          reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
-        };
-      }
-      return r;
-    });
+    const result = await attemptHttp(
+      check.url,
+      check.keyword,
+      deps,
+      timeoutMs,
+      (status, code, reason) => {
+        const r = finish(status, code, reason, undefined, attempt, attemptStart);
+        const objective = check.latencyObjectiveMs;
+        if (status === "up" && objective !== undefined && r.latencyMs > objective) {
+          return {
+            ...r,
+            status: "degraded",
+            reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
+          };
+        }
+        return r;
+      },
+    );
     if (result.status !== "down" || attempt > retries) return result;
     if (deps.now() + retryDelayMs >= start + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
 }
 
+/** Reads the body up to the byte limit and reports whether it contains `keyword`. */
+async function bodyHasKeyword(
+  body: ReadableStream<Uint8Array> | null,
+  keyword: string,
+): Promise<boolean> {
+  if (body === null) return false;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let bytes = 0;
+  try {
+    while (bytes < MAX_KEYWORD_BODY_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value.subarray(0, MAX_KEYWORD_BODY_BYTES - bytes);
+      bytes += chunk.length;
+      // Rescan only the tail that can hold a match straddling the previous chunk.
+      const from = Math.max(0, text.length - keyword.length + 1);
+      text += decoder.decode(chunk, { stream: true });
+      if (text.indexOf(keyword, from) !== -1) return true;
+    }
+    return false;
+  } finally {
+    // Best-effort cancel of the rest of the body; failure to cancel is irrelevant.
+    await reader.cancel().catch(() => {});
+  }
+}
+
 async function attemptHttp(
   url: string,
+  keyword: string | undefined,
   deps: CheckDeps,
   timeoutMs: number,
   done: (status: Result["status"], statusCode: number | null, reason: string | null) => Result,
@@ -133,9 +171,14 @@ async function attemptHttp(
       headers: { "user-agent": userAgent(deps.location) },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    const isOk = res.status >= 200 && res.status < 300;
+    if (isOk && keyword !== undefined) {
+      if (await bodyHasKeyword(res.body, keyword)) return done("up", res.status, null);
+      return done("down", res.status, `keyword "${keyword}" not found`);
+    }
     // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
-    if (res.status >= 200 && res.status < 300) {
+    if (isOk) {
       return done("up", res.status, null);
     }
     return done("down", res.status, `HTTP ${res.status}`);
