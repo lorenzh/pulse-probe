@@ -40,7 +40,7 @@ See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/d
 
 ## Checks
 
-The probe has no check configuration of its own. It fetches the checks once at startup from `GET /checks` on the API and retries every 2000 ms until that succeeds. The checks are defined in the API's checks file.
+The probe has no check configuration of its own. It fetches the checks once at startup from `GET /checks` on the API and retries every 10000 ms until that succeeds, logging `fetching checks failed: <reason>; retrying in 10000ms` each time. The checks are defined in the API's checks file.
 
 ### HTTP checks
 
@@ -74,7 +74,7 @@ A check with `type: "tls"` has `host`, `port` and `warnDays`, and optionally `ti
 - A connect or handshake error is `down` with the error code, or `timeout after <n>ms`.
 - Otherwise it is `up`.
 - The chain and the hostname are not verified (`rejectUnauthorized: false`). Only the leaf's expiry is judged.
-- A TLS check with an empty `host` or a non-integer `port` or `warnDays` is skipped and logged like any invalid check.
+- A TLS check with an empty `host` or a non-integer `port` or `warnDays` fails the contract validator. The probe skips it, logs `skipping invalid check ...: <error>` and runs the others.
 
 ### Retries
 
