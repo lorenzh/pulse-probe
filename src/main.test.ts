@@ -73,6 +73,33 @@ for (const [name, env] of [
   });
 }
 
+test("an occupied health port exits 2 with one line naming both settings and no API call", async () => {
+  let apiCalls = 0;
+  const api = await fakeApi((_q, res) => {
+    apiCalls++;
+    res.end("[]");
+  });
+  const blocker = http.createServer();
+  servers.push(blocker);
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const port = (blocker.address() as AddressInfo).port;
+  const r = run({
+    PULSE_PROBE_TOKEN: "tok-secret",
+    PULSE_API_URL: api,
+    PULSE_HEALTH_HOST: "127.0.0.1",
+    PULSE_HEALTH_PORT: String(port),
+  });
+  assert.equal((await r.exit).code, 2);
+  const lines = r.stderr().trimEnd().split("\n");
+  assert.equal(lines.length, 1);
+  assert.match(
+    lines[0] ?? "",
+    /^pulse-probe: cannot listen on 127\.0\.0\.1:\d+ \(PULSE_HEALTH_HOST\/PULSE_HEALTH_PORT\): /,
+  );
+  assert.equal(r.stdout(), "");
+  assert.equal(apiCalls, 0);
+});
+
 test("SIGTERM while the startup fetch retries exits 0 quickly", async () => {
   const api = await fakeApi((_q, res) => {
     res.statusCode = 500;

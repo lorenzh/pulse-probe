@@ -87,7 +87,7 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       throw new SettingsError(
-        `cannot listen on ${host}:${port}: ${err instanceof Error ? err.message : String(err)}`,
+        `cannot listen on ${host}:${port} (PULSE_HEALTH_HOST/PULSE_HEALTH_PORT): ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
     }
