@@ -13,12 +13,14 @@ Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running 
 
 ## Layout
 
-- `src/main.ts`: entry point. Reads the environment and wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout`.
+- `src/main.ts`: entry point, built on `runService` from pulse-kit. Wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout`.
 - `src/check.ts`: runs one check (HTTP with retries, or TLS certificate expiry).
 - `src/client.ts`: talks to pulse-api (`GET /checks` through `fetchJson` from pulse-contract, `POST /results`).
 - `src/location.ts`: parses `PULSE_LOCATION`.
 - `src/reload-interval.ts`: parses `PULSE_CHECKS_RELOAD_MS`.
 - `src/reloader.ts`: reloads the checks periodically and on request, keeps the old ones on failure.
+- `src/settings.ts`: reads the environment with the pulse-kit readers.
+- `src/metrics.ts`: the probe metrics on the pulse-kit registry.
 - `src/token.ts`: parses `PULSE_PROBE_TOKEN`.
 - `src/scheduler.ts`: runs each check on its interval without overlap and follows check changes with `sync`.
 
@@ -35,7 +37,7 @@ node --test src/check.test.ts
 - Tests use hand-written fakes and inject `now`, `sleep` and `setTimeout`. Most tests never wait in real time, but some use real 50 ms timeouts (`check.test.ts`, `tls.test.ts`). They use no external network.
 - Line coverage must be at least 80 %. Cognitive complexity is limited to 15 per function.
 - The TLS tests need the `openssl` CLI.
-- Contract types are imported with `import type` from `@lorenzh/pulse-contract`, pinned to a full commit SHA.
+- Contract types are imported with `import type` from `@lorenzh/pulse-contract`, pinned to a full commit SHA. The same holds for `@lorenzh/pulse-kit`, which provides the env readers, `runService`, the ops server, the metrics registry and the logger.
 
 ## Hooks and CI
 

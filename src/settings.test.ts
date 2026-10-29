@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { loadSettings, SettingsError } from "./settings.ts";
+import { StartupError } from "@lorenzh/pulse-kit";
+import { loadSettings } from "./settings.ts";
 
 const good = { PULSE_PROBE_TOKEN: "tok-secret" };
 
@@ -19,15 +20,25 @@ for (const [name, env] of [
   ["PULSE_LOG_LEVEL", { ...good, PULSE_LOG_LEVEL: "loud" }],
   ["PULSE_HEALTH_PORT", { ...good, PULSE_HEALTH_PORT: "abc" }],
 ] as const) {
-  test(`loadSettings gives one pulse-probe line for a bad ${name}`, () => {
+  test(`loadSettings gives one StartupError line for a bad ${name}`, () => {
     assert.throws(
       () => loadSettings(env),
       (err: unknown) =>
-        err instanceof SettingsError &&
-        err.message.startsWith("pulse-probe: ") &&
+        err instanceof StartupError &&
         err.message.includes(name) &&
         !err.message.includes("\n") &&
         !err.message.includes("tok-secret"),
     );
   });
 }
+
+test("loadSettings reads the health listener with the default host", () => {
+  assert.deepEqual(loadSettings({ ...good, PULSE_HEALTH_PORT: "9100" }).health, {
+    port: 9100,
+    host: "127.0.0.1",
+  });
+  assert.deepEqual(
+    loadSettings({ ...good, PULSE_HEALTH_PORT: "0", PULSE_HEALTH_HOST: "0.0.0.0" }).health,
+    { port: 0, host: "0.0.0.0" },
+  );
+});
