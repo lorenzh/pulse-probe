@@ -68,3 +68,12 @@ The signal handlers are registered before anything else. On `SIGINT` or `SIGTERM
 ## Locations
 
 One probe is one location. How locations are combined is in [quorum and incidents](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#quorum-and-incidents).
+
+## Shared runtime (pulse-kit)
+
+Startup, shutdown, the health listener, the metrics text and the logger come from `@lorenzh/pulse-kit`. Differences to earlier versions:
+
+- `PULSE_HEALTH_PORT` and `PULSE_LOG_LEVEL` errors read `<NAME>: must be ...` (a colon after the name).
+- A failure at startup other than a configuration error is logged as a JSON line `startup failed` with an `error` field, and the probe exits with 1.
+- A log field named `time`, `level` or `msg` never replaces the base key.
+- `/metrics` output is unchanged.

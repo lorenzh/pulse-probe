@@ -26,6 +26,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 - `pulse-contract` holds the shared types and their small validators and version helpers. It depends on no other repo.
 - Import contract types with `import type`. Import its validators and helpers by name only for edge validation. A service never imports another service.
 - Services talk to each other only over HTTP at run time, in the shapes the contract defines.
+- Use `pulse-kit`, `pulse-contract` or an approved package before writing infrastructure code. Propose an addition to `pulse-kit` instead of a local helper.
 - Pin the contract dependency to a full commit SHA on its `main`; update the pin when the spec needs a newer contract.
 - A change that needs a contract change waits for the merged contract change. Never copy contract types into a service.
 - Edit only this repository. Other repositories in the workspace are read-only context.
@@ -98,6 +99,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 ## This repository
 
 - Entry point is `src/main.ts` (`npm start`): it fetches the checks from the API, then wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout` into the other modules.
+- Shared runtime helpers (env readers, `runService`, ops server, metrics registry, logger) come from `@lorenzh/pulse-kit`, pinned to a full commit SHA of its `main`.
 - Modules: `check.ts` runs one check (HTTP with retries, or TLS certificate expiry), `client.ts` talks to pulse-api (`GET /checks`, `POST /results`), `location.ts` parses `PULSE_LOCATION`, `scheduler.ts` runs each check on its interval without overlap.
 - Retries, timeouts and the schedule use the injected `sleep`, `setTimeout` and `now`; tests never wait in real time.
 
