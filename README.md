@@ -12,15 +12,17 @@ Requires Node 24 or newer and a reachable pulse-api that knows your probe token.
 
 ```sh
 npm ci
-PULSE_API_URL=http://localhost:3000 PULSE_LOCATION=default PULSE_PROBE_TOKEN=<token> npm start
+PULSE_API_URL=http://localhost:3000 PULSE_LOCATION=default PULSE_PROBE_TOKEN='<token>' npm start
 ```
 
 With Docker:
 
 ```sh
 docker build --tag pulse-probe:local .
-docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN=<token> pulse-probe:local
+docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN='<token>' pulse-probe:local
 ```
+
+Replace `<token>` with the real probe token.
 
 ## Documentation
 

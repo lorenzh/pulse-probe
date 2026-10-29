@@ -6,16 +6,18 @@ Requires Node 24 or newer.
 
 ```sh
 npm ci
-PULSE_API_URL=http://localhost:3000 PULSE_PROBE_TOKEN=<token> npm start
+PULSE_API_URL=http://localhost:3000 PULSE_PROBE_TOKEN='<token>' npm start
 ```
 
 The probe needs a reachable pulse-api and a probe token that the API knows. See [configuration.md](configuration.md#probe-token).
 
+Replace `<token>`, `<token-a>` and `<token-b>` with the real tokens.
+
 Run one probe per location, each with its own `PULSE_LOCATION` and token:
 
 ```sh
-PULSE_LOCATION=a PULSE_PROBE_TOKEN=<token-a> npm start
-PULSE_LOCATION=b PULSE_PROBE_TOKEN=<token-b> npm start
+PULSE_LOCATION=a PULSE_PROBE_TOKEN='<token-a>' npm start
+PULSE_LOCATION=b PULSE_PROBE_TOKEN='<token-b>' npm start
 ```
 
 ## Docker
@@ -27,8 +29,8 @@ docker build --tag pulse-probe:local .
 docker run --rm \
   -e PULSE_API_URL=http://host.docker.internal:3000 \
   -e PULSE_LOCATION=default \
-  -e PULSE_PROBE_TOKEN=<token> \
+  -e PULSE_PROBE_TOKEN='<token>' \
   pulse-probe:local
 ```
 
-The three variables are not set in the image. Pass them at run time. Without a token the container exits at startup.
+Replace `<token>` with the real token. The three variables are not set in the image. Pass them at run time. Without a token the container exits at startup.

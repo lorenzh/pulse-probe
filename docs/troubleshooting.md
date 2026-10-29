@@ -3,7 +3,7 @@
 ## `PULSE_PROBE_TOKEN is missing or empty`
 
 Cause: the variable is unset or blank. The probe exits with code 1.
-Action: set `PULSE_PROBE_TOKEN` to the token that the API owner entered. In Docker, pass `-e PULSE_PROBE_TOKEN=<token>`.
+Action: set `PULSE_PROBE_TOKEN` to the token that the API owner entered. In Docker, pass `-e PULSE_PROBE_TOKEN='<token>'`. Replace `<token>` with the real token.
 
 ## `PULSE_LOCATION is longer than 64 characters`
 
