@@ -73,6 +73,13 @@ function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** Returns " <id>" when `raw` is an object with a string id, else an empty string. */
+function readableId(raw: unknown): string {
+  if (typeof raw !== "object" || raw === null) return "";
+  const id = (raw as { id?: unknown }).id;
+  return typeof id === "string" ? ` ${id}` : "";
+}
+
 /**
  * Fetches the checks once. The timeout covers the headers and the body.
  * Invalid checks are skipped and logged. Throws when the request fails.
@@ -108,7 +115,7 @@ export async function loadChecks(
   for (const [i, raw] of (body as unknown[]).entries()) {
     const parsed = validateCheck(raw, `checks[${i}]`);
     if (parsed.ok) checks.push(toCheck(parsed.value));
-    else deps.log(`skipping invalid check: ${parsed.error}`);
+    else deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
   }
   return checks;
 }

@@ -227,6 +227,43 @@ test("fetchChecks skips invalid checks, logs their id and keeps the others", asy
   assert.match(logs[4] ?? "", /checks\[5\]\.id/);
 });
 
+test("loadChecks skips an empty url or host and names the check id", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () =>
+    Response.json(
+      [
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "ok", name: "O", url: "http://x", intervalMs: 5 },
+        { id: "emptyurl", name: "U", url: "", intervalMs: 5 },
+        {
+          id: "emptyhost",
+          name: "H",
+          type: "tls",
+          host: "",
+          port: 443,
+          warnDays: 7,
+          intervalMs: 5,
+        },
+      ],
+      { headers: { "x-pulse-contract": "1" } },
+    )) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  const checks = await loadChecks("http://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
+  assert.deepEqual(
+    checks.map((c) => c.id),
+    ["ok"],
+  );
+  assert.equal(logs.length, 2);
+  assert.match(
+    logs[0] ?? "",
+    /skipping invalid check emptyurl: checks\[1\]\.url: must be a non-empty string/,
+  );
+  assert.match(
+    logs[1] ?? "",
+    /skipping invalid check emptyhost: checks\[2\]\.host: must be a non-empty string/,
+  );
+});
+
 test("fetchChecks times out on stalled headers and retries", async () => {
   const controllers: AbortController[] = [];
   let calls = 0;
