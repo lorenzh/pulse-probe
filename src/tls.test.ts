@@ -46,7 +46,13 @@ async function serve(
 }
 const close = (s: net.Server): Promise<void> => new Promise((r) => s.close(() => r()));
 
-const deps = { fetch, now: () => Date.now(), sleep: async () => {}, location: "default" };
+const deps = {
+  fetch,
+  now: () => Date.now(),
+  monotonic: () => performance.now(),
+  sleep: async () => {},
+  location: "default",
+};
 const tlsCheck = (port: number, extra: Partial<TlsCheck> = {}): TlsCheck => ({
   id: "t",
   name: "T",

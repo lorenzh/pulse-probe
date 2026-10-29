@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
-import { fetchChecks, postResult } from "./client.ts";
+import { fetchChecks, loadChecks, postResult } from "./client.ts";
 
 const result: Result = {
   checkId: "a",
@@ -50,7 +50,7 @@ test("postResult sends Result JSON", async () => {
   });
   try {
     const ok = await postResult(url + "/", result, { fetch, log: () => {}, token: "tok-secret" });
-    assert.equal(ok, true);
+    assert.equal(ok, "accepted");
     assert.equal(seen.method, "POST");
     assert.equal(seen.url, "/results");
     assert.equal(seen.type, "application/json");
@@ -70,7 +70,7 @@ test("postResult survives an unreachable API", async () => {
     log: (m) => logs.push(m),
     token: "tok-secret",
   });
-  assert.equal(ok, false);
+  assert.equal(ok, "dropped");
   assert.equal(logs.length, 1);
 });
 
@@ -83,7 +83,7 @@ test("postResult drops on non-204", async () => {
     const logs: string[] = [];
     assert.equal(
       await postResult(url, result, { fetch, log: (m) => logs.push(m), token: "tok-secret" }),
-      false,
+      "dropped",
     );
     assert.equal(logs.length, 1);
   } finally {
@@ -192,27 +192,91 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
   ]);
 });
 
-test("fetchChecks retries on an invalid tls check", async () => {
-  let calls = 0;
+test("fetchChecks skips invalid checks, logs their id and keeps the others", async () => {
   const logs: string[] = [];
-  const fakeFetch = (async () => {
-    calls++;
-    return Response.json(
-      calls === 1
-        ? [{ id: "t", name: "T", type: "tls", intervalMs: 1 }]
-        : // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-          [{ id: "h", name: "H", url: "http://x", intervalMs: 5 }],
-    );
-  }) as unknown as typeof fetch;
+  const fakeFetch = (async () =>
+    Response.json([
+      { id: "t", name: "T", type: "tls", intervalMs: 1 },
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      { id: "h", name: "H", url: "http://x", intervalMs: 5 },
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      { id: "noint", name: "N", url: "http://x" },
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      { id: "nan", name: "N", url: "http://x", intervalMs: "5" },
+      { id: "nourl", name: "N", intervalMs: 5 },
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      { name: "noid", url: "http://x", intervalMs: 5 },
+    ])) as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
     sleep: async () => {},
     log: (m) => logs.push(m),
   });
-  assert.equal(checks.length, 1);
-  assert.equal(calls, 2);
+  assert.deepEqual(
+    checks.map((c) => c.id),
+    ["h"],
+  );
+  assert.equal(logs.length, 5);
   assert.match(logs[0] ?? "", /invalid tls check t/);
+  assert.match(logs[1] ?? "", /noint/);
+  assert.match(logs[4] ?? "", /id missing/);
+});
+
+test("fetchChecks times out on stalled headers and retries", async () => {
+  const controllers: AbortController[] = [];
+  let calls = 0;
+  const fakeFetch = ((_u: unknown, init?: RequestInit) => {
+    calls++;
+    if (calls === 1) return new Promise(() => {});
+    assert.ok(init?.signal);
+    return Promise.resolve(Response.json([]));
+  }) as unknown as typeof fetch;
+  const logs: string[] = [];
+  const sleeps: number[] = [];
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  const p = fetchChecks("http://api", {
+    fetch: fakeFetch,
+    sleep: async (ms) => void sleeps.push(ms),
+    log: (m) => logs.push(m),
+    timeoutSignal: () => {
+      const c = new AbortController();
+      controllers.push(c);
+      if (controllers.length === 1) queueMicrotask(() => c.abort());
+      return c.signal;
+    },
+  });
+  assert.deepEqual(await p, []);
+  assert.equal(calls, 2);
+  assert.match(logs[0] ?? "", /timed out/);
+  assert.equal(sleeps.length, 1);
+});
+
+test("loadChecks times out on a stalled body", async () => {
+  const stalled = new ReadableStream<Uint8Array>({ start() {} });
+  const fakeFetch = (async () => new Response(stalled, { status: 200 })) as unknown as typeof fetch;
+  const c = new AbortController();
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  const p = loadChecks("http://api", {
+    fetch: fakeFetch,
+    log: () => {},
+    timeoutSignal: () => c.signal,
+  });
+  setImmediate(() => c.abort());
+  await assert.rejects(p, /timed out/);
+});
+
+test("postResult reports an unknown check on 404", async () => {
+  const { server, url } = await listen((_q, res) => {
+    res.statusCode = 404;
+    res.end("{}");
+  });
+  try {
+    const outcome = await postResult(url, result, { fetch, log: () => {}, token: "t" });
+    assert.equal(outcome, "unknown-check");
+  } finally {
+    await close(server);
+  }
 });
 
 test("fetchChecks forwards retries and retryDelayMs", async () => {
@@ -256,7 +320,7 @@ for (const status of [401, 403]) {
         log: (m) => logs.push(m),
         token: "tok-secret",
       });
-      assert.equal(ok, false);
+      assert.equal(ok, "dropped");
       assert.equal(logs.length, 1);
       assert.match(logs[0] ?? "", /token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION/);
       assert.doesNotMatch(logs[0] ?? "", /tok-secret/);
@@ -307,6 +371,7 @@ test("fetchChecks keeps the keyword so runCheck marks a body without it down", a
   const r = await runCheck(check, {
     fetch: fakeFetch,
     now: () => 0,
+    monotonic: () => 0,
     sleep: async () => {},
     location: "default",
   });

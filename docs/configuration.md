@@ -4,11 +4,20 @@
 
 These are all the variables the code reads (`src/main.ts`).
 
-| Variable            | Default                 | Meaning                                                                         |
-| ------------------- | ----------------------- | ------------------------------------------------------------------------------- |
-| `PULSE_API_URL`     | `http://localhost:3000` | Base URL of pulse-api. Trailing slashes are removed.                            |
-| `PULSE_LOCATION`    | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters). |
-| `PULSE_PROBE_TOKEN` | none (required)         | Secret token that authorizes this probe to post results to pulse-api.           |
+| Variable                 | Default                 | Meaning                                                                               |
+| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------- |
+| `PULSE_API_URL`          | `http://localhost:3000` | Base URL of pulse-api. Trailing slashes are removed.                                  |
+| `PULSE_LOCATION`         | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).       |
+| `PULSE_PROBE_TOKEN`      | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                 |
+| `PULSE_CHECKS_RELOAD_MS` | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, at least 5000. |
+
+## Checks reload
+
+- The probe reloads `GET /checks` every `PULSE_CHECKS_RELOAD_MS` and follows the result: it starts added checks, stops removed ones and restarts checks whose settings changed. Unchanged checks keep their schedule.
+- A value below 5000 or one that is not an integer makes the probe exit at startup with `PULSE_CHECKS_RELOAD_MS must be an integer of at least 5000`.
+- A failed reload keeps the running checks, is logged and is retried after 10 seconds (or the interval, if shorter).
+- When the API answers 404 for a result (the check is unknown or no longer active), the probe reloads at once, at most every 5 seconds.
+- Each `GET /checks` request times out after 10 seconds (headers and body). Checks with an invalid `id`, `intervalMs`, `url` or TLS settings are skipped and logged.
 
 ## Location
 

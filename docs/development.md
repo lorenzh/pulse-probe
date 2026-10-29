@@ -17,8 +17,10 @@ Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running 
 - `src/check.ts`: runs one check (HTTP with retries, or TLS certificate expiry).
 - `src/client.ts`: talks to pulse-api (`GET /checks`, `POST /results`).
 - `src/location.ts`: parses `PULSE_LOCATION`.
+- `src/reload-interval.ts`: parses `PULSE_CHECKS_RELOAD_MS`.
+- `src/reloader.ts`: reloads the checks periodically and on request, keeps the old ones on failure.
 - `src/token.ts`: parses `PULSE_PROBE_TOKEN`.
-- `src/scheduler.ts`: runs each check on its interval without overlap.
+- `src/scheduler.ts`: runs each check on its interval without overlap and follows check changes with `sync`.
 
 ## Checks
 

@@ -16,15 +16,20 @@ Full line: `dropping result for <id>: token rejected, ...`.
 Cause: the API answered 401 or 403. The token is unknown, or `PULSE_LOCATION` differs from the location of the token (an unset location means `default`).
 Action: compare both values with the API's tokens file. The probe keeps running and drops every result until you fix them and restart it.
 
-## `fetching checks failed: ... retrying in 2000ms`
+## `fetching checks failed: ... retrying in 10000ms`
 
-Cause: pulse-api is down, `PULSE_API_URL` is wrong (the reason shows `HTTP <code>`, a network code such as `ECONNREFUSED`, or `unexpected response`), or a TLS check is invalid (`invalid tls check <id>`).
-Action: fix the URL or start the API, or fix the check in the API's checks file and restart the API. The probe retries on its own. Inside Docker, `localhost` is the container; use `host.docker.internal` or the service name.
+Cause: pulse-api is down, `PULSE_API_URL` is wrong (the reason shows `HTTP <code>`, a network code such as `ECONNREFUSED`, or `unexpected response`), or the request timed out after 10 seconds (`timed out`).
+Action: fix the URL or start the API. The probe retries on its own. After the first start it keeps the running checks and logs `reloading checks failed`. Inside Docker, `localhost` is the container; use `host.docker.internal` or the service name.
+
+## `skipping invalid check: ...`
+
+Cause: the API sent a check with a missing `id`, a missing or non-positive `intervalMs`, a missing `url`, or invalid TLS settings (`invalid tls check <id>`). The probe skips it and runs the others.
+Action: fix the check in the API's checks file and restart the API. The probe picks it up on its next reload.
 
 ## `dropping result for <id>: API answered HTTP <code>`
 
-Cause: the API answered something other than 204 (and not 401 or 403), for example 400 for an unknown check id or an invalid body.
-Action: restart the API and then the probe if the checks changed, so both use the same check ids. Read the API log for the reason.
+Cause: the API answered something other than 204 (and not 401 or 403), for example 400 for an invalid body. On 404 (unknown or removed check) the probe reloads its checks at once.
+Action: read the API log for the reason. After a checks change, restart only the API.
 
 ## `dropping result for <id>: <error>`
 
@@ -38,8 +43,8 @@ Action: test the URL from the probe's host. Raise `timeoutMs` in the API's check
 
 ## New or changed checks do not run
 
-Cause: the probe reads the checks once at startup.
-Action: restart the API, then the probe.
+Cause: the API reads its checks file at startup, and the probe reloads every `PULSE_CHECKS_RELOAD_MS` (default 60 s).
+Action: restart the API, then wait one reload interval. Look for `reloading checks failed` in the probe log.
 
 ## No incident opens although a probe reports down
 
