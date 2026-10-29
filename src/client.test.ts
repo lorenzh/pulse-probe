@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
-import { fetchChecks, loadChecks, postResult } from "./client.ts";
+import { fetchChecks, loadChecks, postResult, StartupAbortedError } from "./client.ts";
 
 const result: Result = {
   checkId: "a",
@@ -76,7 +76,7 @@ test("postResult survives an unreachable API", async () => {
     log: (m) => logs.push(m),
     token: "tok-secret",
   });
-  assert.equal(ok, "dropped");
+  assert.equal(ok, "failed");
   assert.equal(logs.length, 1);
 });
 
@@ -501,4 +501,39 @@ test("postResult logs a contract version mismatch and keeps the outcome", async 
   assert.equal(outcome, "accepted");
   assert.equal(logs.length, 1);
   assert.match(logs[0] ?? "", /version mismatch/);
+});
+
+test("fetchChecks stops waiting for a retry when the signal aborts", async () => {
+  const controller = new AbortController();
+  const failingFetch: typeof fetch = async () => {
+    throw new Error("down");
+  };
+  const result = fetchChecks("https://api", {
+    fetch: failingFetch,
+    sleep: (ms) =>
+      new Promise<void>((_resolve, reject) => {
+        assert.equal(ms, 10_000);
+        controller.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      }),
+    log: () => {},
+    signal: controller.signal,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(result, StartupAbortedError);
+});
+
+test("fetchChecks throws at once when the signal is already aborted", async () => {
+  const failingFetch: typeof fetch = async () => {
+    throw new Error("must not be called");
+  };
+  await assert.rejects(
+    fetchChecks("https://api", {
+      fetch: failingFetch,
+      sleep: async () => {},
+      log: () => {},
+      signal: AbortSignal.abort(),
+    }),
+    StartupAbortedError,
+  );
 });

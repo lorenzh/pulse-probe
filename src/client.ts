@@ -12,14 +12,27 @@ export interface ClientDeps {
   log: (message: string) => void;
   /** Defaults to `AbortSignal.timeout`. */
   timeoutSignal?: (ms: number) => AbortSignal;
+  /** Aborts the request and the retry wait, for shutdown. */
+  signal?: AbortSignal;
+}
+
+/** Thrown by `fetchChecks` when the shutdown signal aborts it. */
+export class StartupAbortedError extends Error {
+  override name = "StartupAbortedError";
+  constructor() {
+    super("startup aborted by a shutdown signal");
+  }
 }
 
 export const RETRY_MS = 10_000;
 
 export const FETCH_TIMEOUT_MS = 10_000;
 
-/** `unknown-check` means the API answered 404: the check list is out of date. */
-export type PostOutcome = "accepted" | "dropped" | "unknown-check";
+/**
+ * `unknown-check` means the API answered 404: the check list is out of date.
+ * `dropped` is any other answer than 204; `failed` is a network error or timeout.
+ */
+export type PostOutcome = "accepted" | "dropped" | "unknown-check" | "failed";
 
 function join(baseUrl: string, path: string): string {
   let end = baseUrl.length;
@@ -86,9 +99,10 @@ function readableId(raw: unknown): string {
  */
 export async function loadChecks(
   baseUrl: string,
-  deps: Pick<ClientDeps, "fetch" | "log" | "timeoutSignal">,
+  deps: Pick<ClientDeps, "fetch" | "log" | "timeoutSignal" | "signal">,
 ): Promise<Check[]> {
-  const signal = (deps.timeoutSignal ?? AbortSignal.timeout)(FETCH_TIMEOUT_MS);
+  const timeout = (deps.timeoutSignal ?? AbortSignal.timeout)(FETCH_TIMEOUT_MS);
+  const signal = deps.signal === undefined ? timeout : AbortSignal.any([timeout, deps.signal]);
   const body = await abortable(
     (async (): Promise<unknown> => {
       const res = await deps.fetch(join(baseUrl, "/checks"), { signal });
@@ -120,20 +134,35 @@ export async function loadChecks(
   return checks;
 }
 
-/** Fetches the checks from the API, retrying until it succeeds. */
+/** Waits `ms`; turns a wait aborted by shutdown into `StartupAbortedError`. */
+async function waitOrAbort(deps: ClientDeps, ms: number): Promise<void> {
+  try {
+    await deps.sleep(ms);
+  } catch (err) {
+    if (deps.signal?.aborted) throw new StartupAbortedError();
+    throw err;
+  }
+}
+
+/**
+ * Fetches the checks from the API, retrying until it succeeds.
+ * Throws `StartupAbortedError` once `deps.signal` aborts.
+ */
 export async function fetchChecks(
   baseUrl: string,
   deps: ClientDeps,
   retryMs: number = RETRY_MS,
 ): Promise<Check[]> {
   for (;;) {
+    if (deps.signal?.aborted) throw new StartupAbortedError();
     try {
       return await loadChecks(baseUrl, deps);
     } catch (err) {
+      if (deps.signal?.aborted) throw new StartupAbortedError();
       deps.log(
         `fetching checks failed: ${err instanceof Error ? err.message : String(err)}; retrying in ${retryMs}ms`,
       );
-      await deps.sleep(retryMs);
+      await waitOrAbort(deps, retryMs);
     }
   }
 }
@@ -142,14 +171,17 @@ export async function fetchChecks(
 export async function postResult(
   baseUrl: string,
   result: Result,
-  deps: Pick<ClientDeps, "fetch" | "log"> & { token: string },
+  deps: Pick<ClientDeps, "fetch" | "log" | "signal"> & { token: string },
 ): Promise<PostOutcome> {
   try {
     const res = await deps.fetch(join(baseUrl, "/results"), {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${deps.token}` },
       body: JSON.stringify(result),
-      signal: AbortSignal.timeout(10_000),
+      signal:
+        deps.signal === undefined
+          ? AbortSignal.timeout(10_000)
+          : AbortSignal.any([AbortSignal.timeout(10_000), deps.signal]),
     });
     // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
@@ -172,6 +204,6 @@ export async function postResult(
     deps.log(
       `dropping result for ${result.checkId}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return "dropped";
+    return "failed";
   }
 }
