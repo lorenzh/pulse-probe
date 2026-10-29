@@ -1,6 +1,9 @@
 import {
   type Check,
   checkWireVersion,
+  type FetchJsonError,
+  type FetchJsonOptions,
+  fetchJson,
   type HeartbeatCheck,
   type Result,
   validateCheck,
@@ -11,8 +14,8 @@ export interface ClientDeps {
   fetch: typeof fetch;
   sleep: (ms: number) => Promise<void>;
   log: (message: string) => void;
-  /** Defaults to `AbortSignal.timeout`. */
-  timeoutSignal?: (ms: number) => AbortSignal;
+  /** Timer injection for the request timeout; defaults to `setTimeout`. Returns a cancel function. */
+  schedule?: (fn: () => void, ms: number) => () => void;
   /** Aborts the request and the retry wait, for shutdown. */
   signal?: AbortSignal;
 }
@@ -71,23 +74,30 @@ function toCheck(c: ProbeCheck): ProbeCheck {
 // Loggers that already reported a missing version header: the reload loop must not repeat it.
 const warnedAbsent = new WeakSet<object>();
 
-/** Rejects when `signal` aborts, even if the pending work ignores the signal. */
-function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(new Error(`timed out after ${FETCH_TIMEOUT_MS}ms`));
-    if (signal.aborted) return onAbort();
-    signal.addEventListener("abort", onAbort, { once: true });
-    work.then(
-      (v) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(v);
-      },
-      (err: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(err);
-      },
-    );
-  });
+/** Maps a typed client error to the error `loadChecks` throws. */
+function toError(error: FetchJsonError): Error {
+  switch (error.kind) {
+    case "timeout":
+      return new Error(`timed out after ${error.timeoutMs}ms`);
+    case "aborted":
+      return new StartupAbortedError();
+    case "network":
+      return error.cause instanceof Error ? error.cause : new Error(String(error.cause));
+    case "http":
+      return new Error(`HTTP ${error.status}`);
+    case "too-large":
+      return new Error(`response is larger than ${error.maxBytes} bytes`);
+    case "invalid-json":
+      return new Error(`invalid JSON: ${error.message}`);
+    case "wire-mismatch":
+      return new Error(`contract version mismatch: ${error.message}`);
+    case "validation":
+      return new Error(error.message);
+    default: {
+      const unreachable: never = error;
+      return new Error(String(unreachable));
+    }
+  }
 }
 
 /** Returns " <id>" when `raw` is an object with a string id, else an empty string. */
@@ -103,34 +113,29 @@ function readableId(raw: unknown): string {
  */
 export async function loadChecks(
   baseUrl: string,
-  deps: Pick<ClientDeps, "fetch" | "log" | "timeoutSignal" | "signal">,
+  deps: Pick<ClientDeps, "fetch" | "log" | "schedule" | "signal">,
 ): Promise<ProbeCheck[]> {
-  const timeout = (deps.timeoutSignal ?? AbortSignal.timeout)(FETCH_TIMEOUT_MS);
-  const signal = deps.signal === undefined ? timeout : AbortSignal.any([timeout, deps.signal]);
-  const body = await abortable(
-    (async (): Promise<unknown> => {
-      const res = await deps.fetch(join(baseUrl, "/checks"), { signal });
-      if (!res.ok) {
-        // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
-        await res.body?.cancel().catch(() => {});
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const version = checkWireVersion(res.headers.get(WIRE_VERSION_HEADER));
-      if (version.status === "mismatch") {
-        await res.body?.cancel().catch(() => {});
-        throw new Error(`contract version mismatch: ${version.error}`);
-      }
-      if (version.status === "absent" && !warnedAbsent.has(deps.log)) {
-        warnedAbsent.add(deps.log);
-        deps.log(`API sent no ${WIRE_VERSION_HEADER} header; cannot check the contract version`);
-      }
-      return res.json();
-    })(),
-    signal,
-  );
-  if (!Array.isArray(body)) throw new Error("unexpected response");
+  // The client reports the absent header before it checks the status; the probe logs it for 2xx only.
+  let isWireAbsent = false;
+  const options: FetchJsonOptions<unknown[]> = {
+    fetch: deps.fetch,
+    timeoutMs: FETCH_TIMEOUT_MS,
+    validate: (raw) =>
+      Array.isArray(raw) ? { ok: true, value: raw } : { ok: false, error: "unexpected response" },
+    onWireAbsent: () => {
+      isWireAbsent = true;
+    },
+  };
+  if (deps.signal !== undefined) options.signal = deps.signal;
+  if (deps.schedule !== undefined) options.schedule = deps.schedule;
+  const res = await fetchJson(join(baseUrl, "/checks"), options);
+  if (!res.ok) throw toError(res.error);
+  if (isWireAbsent && !warnedAbsent.has(deps.log)) {
+    warnedAbsent.add(deps.log);
+    deps.log(`API sent no ${WIRE_VERSION_HEADER} header; cannot check the contract version`);
+  }
   const checks: ProbeCheck[] = [];
-  for (const [i, raw] of (body as unknown[]).entries()) {
+  for (const [i, raw] of res.value.entries()) {
     const parsed = validateCheck(raw, `checks[${i}]`);
     // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
     if (!parsed.ok) deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
