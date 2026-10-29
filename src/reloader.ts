@@ -1,12 +1,12 @@
-import type { Check } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 import type { Timer } from "./scheduler.ts";
 
 export interface ReloaderDeps {
   timer: Timer;
   /** Monotonic clock in ms. */
   now: () => number;
-  load: () => Promise<Check[]>;
-  apply: (checks: Check[]) => void;
+  load: () => Promise<ProbeCheck[]>;
+  apply: (checks: ProbeCheck[]) => void;
   log: (message: string) => void;
   intervalMs: number;
   /** Delay before retrying a failed reload; never later than `intervalMs`. */

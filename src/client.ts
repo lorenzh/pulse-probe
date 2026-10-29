@@ -1,6 +1,7 @@
 import {
   type Check,
   checkWireVersion,
+  type HeartbeatCheck,
   type Result,
   validateCheck,
   WIRE_VERSION_HEADER,
@@ -24,6 +25,9 @@ export class StartupAbortedError extends Error {
   }
 }
 
+/** A check the probe runs: every check type except `heartbeat`, which jobs ping the API for. */
+export type ProbeCheck = Exclude<Check, HeartbeatCheck>;
+
 export const RETRY_MS = 10_000;
 
 export const FETCH_TIMEOUT_MS = 10_000;
@@ -41,9 +45,9 @@ function join(baseUrl: string, path: string): string {
 }
 
 /** Copies the fields of a validated check, dropping the state fields the API adds. */
-function toCheck(c: Check): Check {
+function toCheck(c: ProbeCheck): ProbeCheck {
   if (c.type === "tls") {
-    const check: Check = {
+    const check: ProbeCheck = {
       id: c.id,
       name: c.name,
       type: "tls",
@@ -55,7 +59,7 @@ function toCheck(c: Check): Check {
     if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
     return check;
   }
-  const check: Check = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
+  const check: ProbeCheck = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
   if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
   if (c.latencyObjectiveMs !== undefined) check.latencyObjectiveMs = c.latencyObjectiveMs;
   if (c.retries !== undefined) check.retries = c.retries;
@@ -95,12 +99,12 @@ function readableId(raw: unknown): string {
 
 /**
  * Fetches the checks once. The timeout covers the headers and the body.
- * Invalid checks are skipped and logged. Throws when the request fails.
+ * Invalid checks are skipped and logged. Heartbeat checks are dropped silently. Throws when the request fails.
  */
 export async function loadChecks(
   baseUrl: string,
   deps: Pick<ClientDeps, "fetch" | "log" | "timeoutSignal" | "signal">,
-): Promise<Check[]> {
+): Promise<ProbeCheck[]> {
   const timeout = (deps.timeoutSignal ?? AbortSignal.timeout)(FETCH_TIMEOUT_MS);
   const signal = deps.signal === undefined ? timeout : AbortSignal.any([timeout, deps.signal]);
   const body = await abortable(
@@ -125,11 +129,12 @@ export async function loadChecks(
     signal,
   );
   if (!Array.isArray(body)) throw new Error("unexpected response");
-  const checks: Check[] = [];
+  const checks: ProbeCheck[] = [];
   for (const [i, raw] of (body as unknown[]).entries()) {
     const parsed = validateCheck(raw, `checks[${i}]`);
-    if (parsed.ok) checks.push(toCheck(parsed.value));
-    else deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
+    // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
+    if (!parsed.ok) deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
+    else if (parsed.value.type !== "heartbeat") checks.push(toCheck(parsed.value));
   }
   return checks;
 }
@@ -152,7 +157,7 @@ export async function fetchChecks(
   baseUrl: string,
   deps: ClientDeps,
   retryMs: number = RETRY_MS,
-): Promise<Check[]> {
+): Promise<ProbeCheck[]> {
   for (;;) {
     if (deps.signal?.aborted) throw new StartupAbortedError();
     try {

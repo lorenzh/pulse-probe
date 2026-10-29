@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import type { Check, Result } from "@lorenzh/pulse-contract";
+import type { Result } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
+import type { ProbeCheck } from "./client.ts";
 import {
   fetchChecks,
   loadChecks,
@@ -94,7 +95,7 @@ async function main(): Promise<void> {
     logger.info("health listener started", { host, port: health.port });
   }
 
-  let checks: Check[];
+  let checks: ProbeCheck[];
   try {
     checks = await fetchChecks(
       settings.apiUrl,

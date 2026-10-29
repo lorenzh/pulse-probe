@@ -81,6 +81,14 @@ A check with `type: "tls"` has `host`, `port` and `warnDays`, and optionally `ti
 - The chain and the hostname are not verified (`rejectUnauthorized: false`). Only the leaf's expiry is judged.
 - A TLS check with an empty `host` or a non-integer `port` or `warnDays` fails the contract validator. The probe skips it, logs `skipping invalid check ...: <error>` and runs the others.
 
+### Heartbeat checks
+
+A check with `type: "heartbeat"` is never run by the probe. Jobs ping the API, and the API judges it.
+
+- The probe drops heartbeat checks from the list it fetches, before scheduling. It sends no request for them and logs no line for them, also on reload.
+- The check counts in no log line or metric of the probe.
+- Heartbeat checks must not be configured in the API before this probe version runs, or an older probe would run them as HTTP checks.
+
 ### Retries
 
 Only HTTP checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs` is an integer 0..60000 (default 1000).
