@@ -45,7 +45,7 @@ Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `lat
 
 A check with `type: "tls"` has `host`, `port` and `warnDays`, and optionally `timeoutMs` (default 5000 ms, covers connect plus handshake).
 
-- The probe connects to `host:port`, completes the handshake with `servername = host` and reads the leaf certificate's `valid_to`.
+- The probe connects to `host:port`, completes the handshake with `servername = host` (set only when `host` is a name, not an IP address) and reads the leaf certificate's `valid_to`.
 - The result has `statusCode` null and `certDaysLeft`, the floored whole days left (negative when expired, null when no certificate was read).
 - `certDaysLeft <= warnDays` is `down` with reason `certificate expires in N days`.
 - An expired certificate is `down` with reason `certificate expired`.

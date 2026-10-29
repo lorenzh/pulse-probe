@@ -6,10 +6,10 @@ Repository rules for agents and people are in [AGENTS.md](../AGENTS.md). Cross-r
 
 ```sh
 npm ci
-PULSE_PROBE_TOKEN=<token> npm start
+PULSE_PROBE_TOKEN='<token>' npm start
 ```
 
-Point `PULSE_API_URL` at a running pulse-api (default `http://localhost:3000`).
+Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running pulse-api (default `http://localhost:3000`).
 
 ## Layout
 
@@ -30,7 +30,7 @@ node --test src/check.test.ts
 ```
 
 - Tests are written first (red, green, refactor) and sit next to the code as `src/<module>.test.ts`.
-- Tests use hand-written fakes and inject `now`, `sleep` and `setTimeout`. They never wait in real time and use no external network.
+- Tests use hand-written fakes and inject `now`, `sleep` and `setTimeout`. Most tests never wait in real time, but some use real 50 ms timeouts (`check.test.ts`, `tls.test.ts`). They use no external network.
 - Line coverage must be at least 80 %. Cognitive complexity is limited to 15 per function.
 - The TLS tests need the `openssl` CLI.
 - Contract types are imported with `import type` from `@lorenzh/pulse-contract`, pinned to a full commit SHA.

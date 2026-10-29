@@ -32,9 +32,9 @@ Token rotation:
 
 1. The API owner adds the new token and restarts the API.
 2. Set the new `PULSE_PROBE_TOKEN` and restart the probe.
-3. The API owner removes the old token afterwards.
+3. The API owner removes the old token and restarts the API again. The API reads its tokens only at startup, so the old token works until this restart. After it, the old token gets 401.
 
-Between steps 1 and 2 the old token still works. Roll out in this order when you introduce tokens: give probes their tokens first (an old API ignores the header), then enable tokens on the API.
+Between steps 1 and 3 the old token still works. Roll out in this order when you introduce tokens: give probes their tokens first (an old API ignores the header), then enable tokens on the API.
 
 ## Stopping
 
