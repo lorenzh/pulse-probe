@@ -100,6 +100,7 @@ test("fetchChecks retries until the API answers", async () => {
       return void res.end();
     }
     res.setHeader("content-type", "application/json");
+    res.setHeader("x-pulse-contract", "1");
     res.end(
       JSON.stringify([
         {
@@ -195,18 +196,21 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
 test("fetchChecks skips invalid checks, logs their id and keeps the others", async () => {
   const logs: string[] = [];
   const fakeFetch = (async () =>
-    Response.json([
-      { id: "t", name: "T", type: "tls", intervalMs: 1 },
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-      { id: "h", name: "H", url: "http://x", intervalMs: 5 },
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-      { id: "noint", name: "N", url: "http://x" },
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-      { id: "nan", name: "N", url: "http://x", intervalMs: "5" },
-      { id: "nourl", name: "N", intervalMs: 5 },
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-      { name: "noid", url: "http://x", intervalMs: 5 },
-    ])) as unknown as typeof fetch;
+    Response.json(
+      [
+        { id: "t", name: "T", type: "tls", intervalMs: 1 },
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "h", name: "H", url: "http://x", intervalMs: 5 },
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "noint", name: "N", url: "http://x" },
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "nan", name: "N", url: "http://x", intervalMs: "5" },
+        { id: "nourl", name: "N", intervalMs: 5 },
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { name: "noid", url: "http://x", intervalMs: 5 },
+      ],
+      { headers: { "x-pulse-contract": "1" } },
+    )) as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -218,9 +222,9 @@ test("fetchChecks skips invalid checks, logs their id and keeps the others", asy
     ["h"],
   );
   assert.equal(logs.length, 5);
-  assert.match(logs[0] ?? "", /invalid tls check t/);
-  assert.match(logs[1] ?? "", /noint/);
-  assert.match(logs[4] ?? "", /id missing/);
+  assert.match(logs[0] ?? "", /checks\[0\]/);
+  assert.match(logs[1] ?? "", /checks\[2\]\.intervalMs/);
+  assert.match(logs[4] ?? "", /checks\[5\]\.id/);
 });
 
 test("fetchChecks times out on stalled headers and retries", async () => {
@@ -379,4 +383,66 @@ test("fetchChecks keeps the keyword so runCheck marks a body without it down", a
   assert.equal(r.statusCode, 200);
   assert.equal(r.reason, 'keyword "Welcome" not found');
   assert.equal(r.attempts, 2);
+});
+
+const versionHeader = "x-pulse-contract";
+const okBody = [{ id: "h", name: "H", url: "https://x", intervalMs: 5 }];
+
+test("fetchChecks accepts a matching contract version without logging", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () =>
+    Response.json(okBody, { headers: { [versionHeader]: "1" } })) as unknown as typeof fetch;
+  const checks = await fetchChecks("https://api", {
+    fetch: fakeFetch,
+    sleep: async () => {},
+    log: (m) => logs.push(m),
+  });
+  assert.equal(checks.length, 1);
+  assert.deepEqual(logs, []);
+});
+
+test("loadChecks logs an absent version header once per logger and continues", async () => {
+  const logs: string[] = [];
+  const log = (m: string): void => void logs.push(m);
+  const fakeFetch = (async () => Response.json(okBody)) as unknown as typeof fetch;
+  assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
+  assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0] ?? "", /x-pulse-contract/);
+});
+
+test("fetchChecks treats a contract version mismatch as a failed fetch and retries", async () => {
+  let calls = 0;
+  const fakeFetch = (async () => {
+    calls++;
+    return Response.json(okBody, { headers: { [versionHeader]: calls === 1 ? "2" : "1" } });
+  }) as unknown as typeof fetch;
+  const logs: string[] = [];
+  const sleeps: number[] = [];
+  const checks = await fetchChecks(
+    "https://api",
+    { fetch: fakeFetch, sleep: async (ms) => void sleeps.push(ms), log: (m) => logs.push(m) },
+    7,
+  );
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [7]);
+  assert.equal(checks.length, 1);
+  assert.match(logs[0] ?? "", /version mismatch/);
+});
+
+test("postResult logs a contract version mismatch and keeps the outcome", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () =>
+    new Response(null, {
+      status: 204,
+      headers: { [versionHeader]: "9" },
+    })) as unknown as typeof fetch;
+  const outcome = await postResult("https://api", result, {
+    fetch: fakeFetch,
+    log: (m) => logs.push(m),
+    token: "t",
+  });
+  assert.equal(outcome, "accepted");
+  assert.equal(logs.length, 1);
+  assert.match(logs[0] ?? "", /version mismatch/);
 });
