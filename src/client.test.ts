@@ -300,16 +300,15 @@ test("loadChecks skips an empty url or host and names the check id", async () =>
 });
 
 test("fetchChecks times out on stalled headers and retries", async () => {
-  const controllers: AbortController[] = [];
   let calls = 0;
-  const fakeFetch = ((_u: unknown, init?: RequestInit) => {
+  const fakeFetch = (() => {
     calls++;
     if (calls === 1) return new Promise(() => {});
-    assert.ok(init?.signal);
     return Promise.resolve(Response.json([]));
   }) as unknown as typeof fetch;
   const logs: string[] = [];
   const sleeps: number[] = [];
+  let firstTimer = true;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const p = fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -317,11 +316,10 @@ test("fetchChecks times out on stalled headers and retries", async () => {
       sleeps.push(ms);
     },
     log: (m) => logs.push(m),
-    timeoutSignal: () => {
-      const c = new AbortController();
-      controllers.push(c);
-      if (controllers.length === 1) queueMicrotask(() => c.abort());
-      return c.signal;
+    schedule: (fn) => {
+      if (firstTimer) queueMicrotask(fn);
+      firstTimer = false;
+      return () => {};
     },
   });
   assert.deepEqual(await p, []);
@@ -333,15 +331,27 @@ test("fetchChecks times out on stalled headers and retries", async () => {
 test("loadChecks times out on a stalled body", async () => {
   const stalled = new ReadableStream<Uint8Array>({ start() {} });
   const fakeFetch = (async () => new Response(stalled, { status: 200 })) as unknown as typeof fetch;
-  const c = new AbortController();
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const p = loadChecks("http://api", {
     fetch: fakeFetch,
     log: () => {},
-    timeoutSignal: () => c.signal,
+    schedule: (fn) => {
+      setImmediate(fn);
+      return () => {};
+    },
   });
-  setImmediate(() => c.abort());
-  await assert.rejects(p, /timed out/);
+  await assert.rejects(p, /timed out after 10000ms/);
+});
+
+test("loadChecks rejects a body above the size cap", async () => {
+  const big = `["${"x".repeat(5 * 1024 * 1024)}"]`;
+  const fakeFetch = (async () => new Response(big, { status: 200 })) as unknown as typeof fetch;
+  const p = loadChecks(
+    // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+    "http://api",
+    { fetch: fakeFetch, log: () => {} },
+  );
+  await assert.rejects(p, /larger than/);
 });
 
 test("postResult reports an unknown check on 404", async () => {

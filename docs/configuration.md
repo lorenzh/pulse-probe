@@ -22,7 +22,7 @@ A bad value exits with code 2 and one line `pulse-probe: <message>` naming the v
 - A value below 5000, above 2147483647 (the largest timer delay) or one that is not an integer makes the probe exit at startup with `PULSE_CHECKS_RELOAD_MS must be an integer from 5000 to 2147483647`.
 - A failed reload keeps the running checks, is logged and is retried after 10 seconds (or the interval, if shorter).
 - When the API answers 404 for a result (the check is unknown or no longer active), the probe reloads at once, at most every 5 seconds.
-- Each `GET /checks` request times out after 10 seconds (headers and body). Each check is validated with the validators of pulse-contract. An invalid check is skipped and logged with the contract's error, for example `checks[3].intervalMs: must be a finite number > 0`. The probe also reads the `x-pulse-contract` header of the response: a missing header is logged once, a different version counts as a failed fetch and is retried. A version mismatch on the `POST /results` response is logged only.
+- `GET /checks` goes through the shared `fetchJson` client of pulse-contract. A request times out after 10 seconds (headers and body). A body above 5 MiB fails the fetch and is retried. The HTTP status is checked before the version header. Each check is validated with the validators of pulse-contract. An invalid check is skipped and logged with the contract's error, for example `checks[3].intervalMs: must be a finite number > 0`. The probe also reads the `x-pulse-contract` header of the response: a missing header is logged once, a different version counts as a failed fetch and is retried. A version mismatch on the `POST /results` response is logged only.
 
 ## Location
 
