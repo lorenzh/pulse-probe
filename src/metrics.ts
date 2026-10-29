@@ -1,4 +1,5 @@
-import type { Check, Result } from "@lorenzh/pulse-contract";
+import type { Result } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 
 export const DURATION_BUCKETS_SECONDS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] as const;
 
@@ -8,7 +9,7 @@ export type PostMetricOutcome = "ok" | "rejected" | "unknown-check" | "error";
 
 export interface Metrics {
   /** Makes `checks` the configured set; series of removed checks disappear. */
-  setChecks(checks: Check[]): void;
+  setChecks(checks: ProbeCheck[]): void;
   recordResult(result: Result): void;
   recordPost(checkId: string, outcome: PostMetricOutcome): void;
   /** Prometheus text format. Holds check ids only, never URLs, keywords or tokens. */

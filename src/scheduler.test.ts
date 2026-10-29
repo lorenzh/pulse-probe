@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import type { Check, Result } from "@lorenzh/pulse-contract";
+import type { Result } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 import { startScheduler, type Timer } from "./scheduler.ts";
 
 async function flush(): Promise<void> {
@@ -39,8 +40,8 @@ function fakeTimer() {
 }
 
 // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
-const check: Check = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
-const mk = (c: Check): Result => ({
+const check: ProbeCheck = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
+const mk = (c: ProbeCheck): Result => ({
   checkId: c.id,
   timestamp: 0,
   status: "up",
@@ -146,7 +147,7 @@ test("the next run is armed only after a retrying run finished", async () => {
   const f = fakeTimer();
   let calls = 0;
   const waits: Array<() => void> = [];
-  const retrying: Check = { ...check, retries: 1, retryDelayMs: 100 };
+  const retrying: ProbeCheck = { ...check, retries: 1, retryDelayMs: 100 };
   const s = startScheduler([retrying], {
     timer: f.timer,
     now: f.now,

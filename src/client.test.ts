@@ -236,6 +236,32 @@ test("fetchChecks skips invalid checks, logs their id and keeps the others", asy
   assert.match(logs[4] ?? "", /checks\[5\]\.id/);
 });
 
+test("loadChecks drops heartbeat checks without a request or a log line", async () => {
+  const logs: string[] = [];
+  const urls: string[] = [];
+  const fakeFetch = (async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return Response.json(
+      [
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "h", name: "H", url: "http://x", intervalMs: 5 },
+        { id: "t", name: "T", type: "tls", host: "x", port: 443, warnDays: 7, intervalMs: 5 },
+        { id: "nightly", name: "Nightly", type: "heartbeat", period: 60000, grace: 0 },
+      ],
+      { headers: { "x-pulse-contract": "1" } },
+    );
+  }) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  const checks = await loadChecks("http://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
+  assert.deepEqual(
+    checks.map((c) => c.id),
+    ["h", "t"],
+  );
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  assert.deepEqual(urls, ["http://api/checks"]);
+  assert.deepEqual(logs, []);
+});
+
 test("loadChecks skips an empty url or host and names the check id", async () => {
   const logs: string[] = [];
   const fakeFetch = (async () =>

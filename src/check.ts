@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import tls from "node:tls";
-import type { Check, Result, TlsCheck } from "@lorenzh/pulse-contract";
+import type { Result, TlsCheck } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 
 import { userAgent } from "./location.ts";
 
@@ -85,7 +86,7 @@ function errorReason(err: unknown): string {
   return String(err);
 }
 
-export async function runCheck(check: Check, deps: CheckDeps): Promise<Result> {
+export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
   const timeoutMs = check.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = deps.now();
   const startMono = deps.monotonic();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Check } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 import { startReloader } from "./reloader.ts";
 import type { Timer } from "./scheduler.ts";
 
@@ -8,7 +8,7 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 
-function setup(load: () => Promise<Check[]>) {
+function setup(load: () => Promise<ProbeCheck[]>) {
   let clock = 0;
   let nextId = 1;
   const pending = new Map<number, { at: number; fn: () => void }>();
@@ -22,7 +22,7 @@ function setup(load: () => Promise<Check[]>) {
       pending.delete(h as number);
     },
   };
-  const applied: Check[][] = [];
+  const applied: ProbeCheck[][] = [];
   const logs: string[] = [];
   const reloader = startReloader({
     timer,
@@ -55,7 +55,7 @@ function setup(load: () => Promise<Check[]>) {
 }
 
 // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL, no network
-const check: Check = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
+const check: ProbeCheck = { id: "a", name: "A", url: "http://x", intervalMs: 1000 };
 
 test("reloads every interval and applies the checks", async () => {
   const s = setup(async () => [check]);

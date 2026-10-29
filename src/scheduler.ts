@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
-import type { Check, Result } from "@lorenzh/pulse-contract";
+import type { Result } from "@lorenzh/pulse-contract";
+import type { ProbeCheck } from "./client.ts";
 
 export interface Timer {
   setTimeout(fn: () => void, ms: number): unknown;
@@ -10,19 +11,19 @@ export interface SchedulerDeps {
   timer: Timer;
   /** Monotonic clock in ms. */
   now: () => number;
-  run: (check: Check) => Promise<Result>;
+  run: (check: ProbeCheck) => Promise<Result>;
   onResult: (result: Result) => void | Promise<void>;
-  onError?: (check: Check, err: unknown) => void;
+  onError?: (check: ProbeCheck, err: unknown) => void;
 }
 
 export interface Scheduler {
   /** Makes `checks` the running set: starts added, stops removed, restarts changed ones. */
-  sync(checks: Check[]): void;
+  sync(checks: ProbeCheck[]): void;
   stop(): void;
 }
 
 interface Entry {
-  check: Check;
+  check: ProbeCheck;
   handle?: unknown;
 }
 
@@ -31,7 +32,7 @@ interface Entry {
  * scheduled after the previous one finished, so a check never overlaps itself.
  * `deps.now` must be a monotonic clock. A removed or replaced check never posts.
  */
-export function startScheduler(checks: Check[], deps: SchedulerDeps): Scheduler {
+export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Scheduler {
   let stopped = false;
   const entries = new Map<string, Entry>();
 
@@ -59,7 +60,7 @@ export function startScheduler(checks: Check[], deps: SchedulerDeps): Scheduler 
     entries.delete(id);
   };
 
-  const sync = (next: Check[]): void => {
+  const sync = (next: ProbeCheck[]): void => {
     if (stopped) return;
     const wanted = new Map(next.map((c) => [c.id, c]));
     for (const id of [...entries.keys()]) if (!wanted.has(id)) remove(id);
