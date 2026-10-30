@@ -91,7 +91,8 @@ test("a redirect with a body is not followed across origins either", async () =>
   assert.equal(other.hits.length, 0);
 });
 
-test("a same-origin redirect keeps the header and is followed", async () => {
+// compat: passes on the code before the redirect rewrite; it guards behavior that must not change.
+test("compat: a same-origin redirect keeps the header and is followed", async () => {
   const s = await serve((url) =>
     url === "/" ? { status: 302, location: "/next" } : { status: 200 },
   );
@@ -106,7 +107,8 @@ test("a same-origin redirect keeps the header and is followed", async () => {
   );
 });
 
-test("307 same-origin keeps method and body", async () => {
+// compat: passes on the code before the redirect rewrite; it guards behavior that must not change.
+test("compat: 307 same-origin keeps method and body", async () => {
   const s = await serve((url) =>
     url === "/" ? { status: 307, location: "/next" } : { status: 200 },
   );
@@ -173,7 +175,8 @@ test("an https to http hop is not followed", async () => {
   assert.deepEqual(seen, ["https://x.test/"]);
 });
 
-test("a check without headers and body still lets fetch follow redirects", async () => {
+// compat: passes on the code before the redirect rewrite; it guards behavior that must not change.
+test("compat: a check without headers and body still lets fetch follow redirects", async () => {
   const s = await serve((url) =>
     url === "/" ? { status: 302, location: "/next" } : { status: 200 },
   );
@@ -182,7 +185,8 @@ test("a check without headers and body still lets fetch follow redirects", async
   assert.equal(s.hits.length, 2);
 });
 
-test("no reason holds a header value or a body", async () => {
+// compat: passes on the code before the redirect rewrite; it guards behavior that must not change.
+test("compat: no reason holds a header value or a body", async () => {
   const other = await serve(() => ({ status: 200 }));
   const first = await serve(() => ({ status: 307, location: `${other.origin}/` }));
   const r = await run({ url: `${first.origin}/`, method: "POST", body: "sentinel-body" });
