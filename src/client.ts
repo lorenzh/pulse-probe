@@ -1,6 +1,8 @@
 import {
   type Check,
   checkWireVersion,
+  type DnsCheck,
+  type DomainCheck,
   type FetchJsonError,
   type FetchJsonOptions,
   type FetchJsonResult,
@@ -8,6 +10,7 @@ import {
   type HeartbeatCheck,
   headerValueSchema,
   type Result,
+  type TcpCheck,
   validateCheck,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
@@ -68,6 +71,7 @@ function toCheck(c: ProbeCheck): ProbeCheck {
     if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
     return check;
   }
+  if (c.type === "tcp" || c.type === "dns" || c.type === "domain") return toProbedCheck(c);
   const check: ProbeCheck = { id: c.id, name: c.name, url: c.url, intervalMs: c.intervalMs };
   if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
   if (c.latencyObjectiveMs !== undefined) check.latencyObjectiveMs = c.latencyObjectiveMs;
@@ -78,6 +82,33 @@ function toCheck(c: ProbeCheck): ProbeCheck {
   if (c.body !== undefined) check.body = c.body;
   if (c.expectedStatus !== undefined) check.expectedStatus = c.expectedStatus;
   if (c.jsonAssert !== undefined) check.jsonAssert = c.jsonAssert;
+  return check;
+}
+
+/** Copies a tcp, dns or domain check: its own fields, then the shared timers. */
+function toProbedCheck(c: TcpCheck | DnsCheck | DomainCheck): ProbeCheck {
+  const base = { id: c.id, name: c.name, intervalMs: c.intervalMs };
+  let check: ProbeCheck;
+  switch (c.type) {
+    case "tcp":
+      check = { ...base, type: "tcp", host: c.host, port: c.port };
+      break;
+    case "dns":
+      check = { ...base, type: "dns", dnsName: c.dnsName, recordType: c.recordType };
+      if (c.expected !== undefined) check.expected = c.expected;
+      if (c.resolver !== undefined) check.resolver = c.resolver;
+      break;
+    case "domain":
+      check = { ...base, type: "domain", domain: c.domain, warnDays: c.warnDays };
+      break;
+    default: {
+      const unreachable: never = c;
+      throw new Error(`unexpected check ${String(unreachable)}`);
+    }
+  }
+  if (c.timeoutMs !== undefined) check.timeoutMs = c.timeoutMs;
+  if (c.retries !== undefined) check.retries = c.retries;
+  if (c.retryDelayMs !== undefined) check.retryDelayMs = c.retryDelayMs;
   return check;
 }
 

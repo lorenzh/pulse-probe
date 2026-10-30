@@ -1,6 +1,16 @@
 import { isIP } from "node:net";
 import tls from "node:tls";
-import type { ExpectedStatus, JsonAssertion, Result, TlsCheck } from "@lorenzh/pulse-contract";
+import type {
+  ExpectedStatus,
+  HttpCheck,
+  JsonAssertion,
+  Result,
+  TlsCheck,
+} from "@lorenzh/pulse-contract";
+import { type Attempt, DAY_MS, errorCode, errorReason } from "./attempt.ts";
+import { attemptDns, type Resolve, resolveRecords } from "./check-dns.ts";
+import { attemptDomain } from "./check-domain.ts";
+import { attemptTcp, type TcpConnect, tcpConnect } from "./check-tcp.ts";
 import type { ProbeCheck } from "./client.ts";
 
 import { userAgent } from "./location.ts";
@@ -12,7 +22,7 @@ export const DEFAULT_RETRY_DELAY_MS = 1000;
 /** Most body bytes read when an HTTP check has a `keyword`. */
 export const MAX_KEYWORD_BODY_BYTES = 1_048_576;
 
-export const DAY_MS = 86_400_000;
+export { DAY_MS };
 
 export interface TlsConnectOptions {
   host: string;
@@ -68,35 +78,14 @@ export interface CheckDeps {
   sleep: (ms: number) => Promise<void>;
   /** Probe location name, set on every result. */
   location: string;
-  /** Aborts in-flight HTTP requests, for shutdown. */
+  /** Defaults to a real TCP connection. */
+  tcpConnect?: TcpConnect;
+  /** Defaults to `node:dns` `Resolver`. */
+  resolve?: Resolve;
+  /** RDAP bootstrap file of domain checks. Defaults to the IANA file. */
+  rdapBootstrapUrl?: string;
+  /** Aborts in-flight requests, connections and lookups, for shutdown. */
   signal?: AbortSignal;
-}
-
-/** Bun names some network errors differently from Node; reasons keep the Node codes. */
-const BUN_ERROR_CODES: Record<string, string> = {
-  ConnectionRefused: "ECONNREFUSED",
-  ConnectionClosed: "ECONNRESET",
-};
-
-/** The error code of `err` or its cause, if any. */
-function errorCode(err: unknown): string | undefined {
-  const code = rawErrorCode(err);
-  return code === undefined ? undefined : (BUN_ERROR_CODES[code] ?? code);
-}
-
-function rawErrorCode(err: unknown): string | undefined {
-  if (!(err instanceof Error)) return undefined;
-  const cause = (err as { cause?: unknown }).cause;
-  if (cause && typeof cause === "object") {
-    const code = (cause as { code?: unknown }).code;
-    if (typeof code === "string" && code !== "") return code;
-  }
-  const code = (err as { code?: unknown }).code;
-  return typeof code === "string" && code !== "" ? code : undefined;
-}
-
-function errorReason(err: unknown): string {
-  return errorCode(err) ?? (err instanceof Error ? err.message : String(err));
 }
 
 export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
@@ -126,22 +115,69 @@ export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Resu
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? startMono : deps.monotonic();
-    const result = await attemptHttp(check, deps, timeoutMs, (status, code, reason) => {
-      const r = finish(status, code, reason, undefined, attempt, attemptStart);
-      const objective = check.latencyObjectiveMs;
-      if (status === "up" && objective !== undefined && r.latencyMs > objective) {
-        return {
-          ...r,
-          status: "degraded",
-          reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
-        };
-      }
-      return r;
-    });
+    const result = await runAttempt(check, deps, timeoutMs, (status, code, reason, certDaysLeft) =>
+      finish(status, code, reason, certDaysLeft, attempt, attemptStart),
+    );
     if (result.status !== "down" || attempt > retries) return result;
+    if (deps.signal?.aborted === true) return result;
     if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
+}
+
+type Done = (
+  status: Result["status"],
+  statusCode: number | null,
+  reason: string | null,
+  certDaysLeft?: number | null,
+) => Result;
+
+function runAttempt(
+  check: Exclude<ProbeCheck, TlsCheck>,
+  deps: CheckDeps,
+  timeoutMs: number,
+  done: Done,
+): Promise<Result> {
+  switch (check.type) {
+    case "tcp":
+      return attemptTcp(check, timeoutMs, deps.tcpConnect ?? tcpConnect, deps.signal).then((a) =>
+        fromAttempt(a, done),
+      );
+    case "dns":
+      return attemptDns(check, timeoutMs, deps.resolve ?? resolveRecords, deps.signal).then((a) =>
+        fromAttempt(a, done),
+      );
+    case "domain":
+      return attemptDomain(check, timeoutMs, {
+        fetch: deps.fetch,
+        now: deps.now,
+        monotonic: deps.monotonic,
+        ...(deps.rdapBootstrapUrl !== undefined ? { bootstrapUrl: deps.rdapBootstrapUrl } : {}),
+        ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+      }).then((a) => fromAttempt(a, done));
+    case "http":
+    case undefined:
+      return attemptHttp(check, deps, timeoutMs, (status, code, reason) => {
+        const r = done(status, code, reason);
+        const objective = check.latencyObjectiveMs;
+        if (status === "up" && objective !== undefined && r.latencyMs > objective) {
+          return {
+            ...r,
+            status: "degraded",
+            reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
+          };
+        }
+        return r;
+      });
+    default: {
+      const unreachable: never = check;
+      throw new Error(`unexpected check ${String(unreachable)}`);
+    }
+  }
+}
+
+function fromAttempt(a: Attempt, done: Done): Result {
+  return done(a.status, null, a.reason, a.certDaysLeft);
 }
 
 /** The body text up to the byte limit, and whether the response had more. */
@@ -270,7 +306,7 @@ async function bodyFailure(check: HttpLikeCheck, res: Response): Promise<string 
   return jsonAssert === undefined ? null : jsonFailure(text, isTruncated, jsonAssert);
 }
 
-type HttpLikeCheck = Exclude<ProbeCheck, TlsCheck>;
+type HttpLikeCheck = HttpCheck;
 
 async function attemptHttp(
   check: HttpLikeCheck,

@@ -14,7 +14,7 @@ Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running 
 ## Layout
 
 - `src/main.ts`: entry point, built on `runService` from pulse-kit. Wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout`.
-- `src/check.ts`: runs one check (HTTP with retries, or TLS certificate expiry).
+- `src/check.ts`: runs one check (HTTP, TCP, DNS or domain with retries, or TLS certificate expiry). `check-tcp.ts`, `check-dns.ts` and `check-domain.ts` hold one attempt of those types; `attempt.ts` holds their shared result and error helpers.
 - `src/client.ts`: talks to pulse-api (`GET /probe/checks` with fallback to `GET /checks`, through `fetchJson` from pulse-contract, `POST /results`).
 - `src/location.ts`: parses `PULSE_LOCATION`.
 - `src/reload-interval.ts`: parses `PULSE_CHECKS_RELOAD_MS`.
