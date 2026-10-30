@@ -80,26 +80,58 @@ function parseBootstrap(doc: unknown): Map<string, string> {
   return services;
 }
 
-async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Map<string, string>> {
+// Single flight per bootstrap URL: concurrent checks share one fetch.
+const bootstrapInFlight = new Map<string, Promise<Map<string, string>>>();
+
+async function fetchBootstrap(
+  url: string,
+  deps: DomainDeps,
+  signal: AbortSignal,
+): Promise<Map<string, string>> {
+  const res = await deps.fetch(url, { signal, headers: { accept: "application/json" } });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new RdapError(`RDAP bootstrap ${res.status}`);
+  }
+  const services = parseBootstrap(await readJson(res, MAX_BOOTSTRAP_BYTES));
+  bootstrapCache.set(url, { services, fetchedAt: deps.monotonic() });
+  return services;
+}
+
+// shortcut: the shared fetch runs under the first caller's signal, so a waiter with a longer
+// timeout can fail early on the first load; split the signals if check timeouts diverge widely.
+function refreshBootstrap(
+  url: string,
+  deps: DomainDeps,
+  signal: AbortSignal,
+): Promise<Map<string, string>> {
+  let pending = bootstrapInFlight.get(url);
+  if (pending === undefined) {
+    pending = fetchBootstrap(url, deps, signal).finally(() => bootstrapInFlight.delete(url));
+    bootstrapInFlight.set(url, pending);
+  }
+  return pending;
+}
+
+/** Test hook: settles once the bootstrap fetch in flight for `url`, if any, has ended. */
+export async function bootstrapSettled(url: string): Promise<void> {
+  await bootstrapInFlight.get(url)?.catch(() => {});
+}
+
+async function loadBootstrap(
+  deps: DomainDeps,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<Map<string, string>> {
   const url = deps.bootstrapUrl ?? RDAP_BOOTSTRAP_URL;
   const cached = bootstrapCache.get(url);
-  if (cached !== undefined && deps.monotonic() - cached.fetchedAt < BOOTSTRAP_TTL_MS) {
-    return cached.services;
+  if (cached === undefined) return refreshBootstrap(url, deps, signal);
+  if (deps.monotonic() - cached.fetchedAt >= BOOTSTRAP_TTL_MS) {
+    // A stale map answers now; the refresh runs in the background, bounded by the check
+    // timeout and shutdown. On failure the stale map stays and the next check retries.
+    refreshBootstrap(url, deps, attemptSignal(timeoutMs, deps.signal)).catch(() => {});
   }
-  try {
-    const res = await deps.fetch(url, { signal, headers: { accept: "application/json" } });
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => {});
-      throw new RdapError(`RDAP bootstrap ${res.status}`);
-    }
-    const services = parseBootstrap(await readJson(res, MAX_BOOTSTRAP_BYTES));
-    bootstrapCache.set(url, { services, fetchedAt: deps.monotonic() });
-    return services;
-  } catch (err) {
-    // Shutdown or timeout of this attempt is not a bootstrap problem: do not hide it.
-    if (cached !== undefined && !signal.aborted) return cached.services;
-    throw err;
-  }
+  return cached.services;
 }
 
 async function fetchRdap(url: string, deps: DomainDeps, signal: AbortSignal): Promise<unknown> {
@@ -142,8 +174,9 @@ async function lookupExpiry(
   check: DomainCheck,
   deps: DomainDeps,
   signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<number | undefined> {
-  const services = await loadBootstrap(deps, signal);
+  const services = await loadBootstrap(deps, signal, timeoutMs);
   const tld = check.domain.slice(check.domain.lastIndexOf(".") + 1);
   const service = services.get(tld);
   if (service === undefined) throw new RdapError(`no RDAP service for .${tld}`);
@@ -157,7 +190,12 @@ export async function attemptDomain(
   deps: DomainDeps,
 ): Promise<Attempt> {
   try {
-    const expiry = await lookupExpiry(check, deps, attemptSignal(timeoutMs, deps.signal));
+    const expiry = await lookupExpiry(
+      check,
+      deps,
+      attemptSignal(timeoutMs, deps.signal),
+      timeoutMs,
+    );
     if (expiry === undefined) {
       return { status: "down", reason: "expiry date not found in RDAP answer", certDaysLeft: null };
     }

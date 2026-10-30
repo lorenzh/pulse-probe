@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { type CheckDeps, DAY_MS, runCheck } from "./check.ts";
+import { bootstrapSettled } from "./check-domain.ts";
 
 interface Rdap {
   url: string;
@@ -185,10 +186,12 @@ test("domain fetches the bootstrap once per day and keeps the stale map on failu
   assert.equal(r.hits.bootstrap, 1);
   mono += DAY_MS;
   await runCheck(domain(), deps);
+  await bootstrapSettled(r.url);
   assert.equal(r.hits.bootstrap, 2);
   mono += DAY_MS;
   r.setBootstrapFails(true);
   const res = await runCheck(domain(), deps);
+  await bootstrapSettled(r.url);
   assert.equal(r.hits.bootstrap, 3);
   assert.equal(res.status, "up");
 });
@@ -218,4 +221,96 @@ test("domain does not retry once shut down", async () => {
   const res = await runCheck(domain({ retries: 3 }), depsFor(r, { signal: ctl.signal }));
   assert.equal(res.status, "down");
   assert.equal(r.hits.domain, 1);
+});
+
+interface StubBootstrap {
+  url: string;
+  /** Signals of every bootstrap request, in order. */
+  requests: AbortSignal[];
+  deps: (over?: Partial<CheckDeps>) => CheckDeps;
+}
+
+// An injected fetch: the first bootstrap request answers; `later` decides what the others do.
+function stubBootstrap(later: "429" | "stall"): StubBootstrap {
+  const url = `https://bootstrap.stub/dns.json?n=${seq++}`;
+  const requests: AbortSignal[] = [];
+  const fetchFn: CheckDeps["fetch"] = async (input, init) => {
+    if (String(input) !== url) return new Response(events(90));
+    const signal = init?.signal as AbortSignal;
+    requests.push(signal);
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({ services: [[["test"], ["https://rdap.stub/"]]] }));
+    }
+    if (later === "429") return new Response(null, { status: 429 });
+    return new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+  return {
+    url,
+    requests,
+    deps: (over = {}) => ({
+      fetch: fetchFn,
+      now: () => NOW,
+      monotonic: () => mono,
+      sleep: async () => {},
+      location: "default",
+      rdapBootstrapUrl: url,
+      ...over,
+    }),
+  };
+}
+
+test("domain checks started together share one bootstrap fetch", async () => {
+  const stub = stubBootstrap("429");
+  const deps = stub.deps();
+  const results = await Promise.all(Array.from({ length: 100 }, () => runCheck(domain(), deps)));
+  assert.equal(stub.requests.length, 1);
+  assert.deepEqual(new Set(results.map((r) => r.status)), new Set(["up"]));
+});
+
+test("a stalled bootstrap refresh does not hold up a check with a stale map", async () => {
+  const stub = stubBootstrap("stall");
+  const ctl = new AbortController();
+  mono = 5000;
+  const deps = stub.deps({ signal: ctl.signal });
+  assert.equal((await runCheck(domain(), deps)).status, "up");
+  mono += DAY_MS;
+  const results = await Promise.all([
+    runCheck(domain({ timeoutMs: 50 }), deps),
+    runCheck(domain({ timeoutMs: 50 }), deps),
+  ]);
+  assert.deepEqual(
+    results.map((r) => [r.status, r.reason]),
+    [
+      ["up", null],
+      ["up", null],
+    ],
+  );
+  assert.equal(stub.requests.length, 2);
+  assert.equal(stub.requests[1]?.aborted, false);
+  ctl.abort();
+  await bootstrapSettled(stub.url);
+});
+
+test("shutdown aborts a background bootstrap refresh", async () => {
+  const stub = stubBootstrap("stall");
+  const ctl = new AbortController();
+  mono = 9000;
+  const deps = stub.deps({ signal: ctl.signal });
+  await runCheck(domain(), deps);
+  mono += DAY_MS;
+  await runCheck(domain({ timeoutMs: 60_000 }), deps);
+  const refresh = stub.requests[1];
+  assert.equal(refresh?.aborted, false);
+  ctl.abort();
+  await bootstrapSettled(stub.url);
+  assert.equal(refresh?.aborted, true);
+  // The refresh no longer counts as in flight: the next stale check starts a new one.
+  const next = new AbortController();
+  await runCheck(domain(), stub.deps({ signal: next.signal }));
+  assert.equal(stub.requests.length, 3);
+  assert.equal(stub.requests[2]?.aborted, false);
+  next.abort();
+  await bootstrapSettled(stub.url);
 });
