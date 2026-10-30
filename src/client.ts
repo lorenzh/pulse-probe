@@ -81,6 +81,9 @@ function toCheck(c: ProbeCheck): ProbeCheck {
   return check;
 }
 
+/** Only variables with this prefix may feed a header value. */
+const HEADER_ENV_PREFIX = "PULSE_HEADER_";
+
 /**
  * Resolves `{ env }` header values from `env`. Returns the header name and variable name
  * (never a value) of the first reference that is unset, empty or not a valid header value.
@@ -96,6 +99,15 @@ function resolveHeaders(
     if (typeof raw === "string") {
       value[name] = raw;
       continue;
+    }
+    // Checked before the lookup: a forbidden name never reads the environment.
+    if (!raw.env.startsWith(HEADER_ENV_PREFIX)) {
+      return {
+        ok: false,
+        name,
+        variable: raw.env,
+        problem: `must start with ${HEADER_ENV_PREFIX}`,
+      };
     }
     const resolved = env[raw.env];
     if (resolved === undefined || resolved === "") {

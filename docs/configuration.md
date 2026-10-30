@@ -71,8 +71,9 @@ With `keyword` set, a 2xx answer is `up` only when its body contains the keyword
 ### Request options
 
 - `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`.
-- `headers`: a value is a literal string or `{ "env": "NAME" }`. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. The variable replaces the whole header value, so a bearer token needs the scheme in the variable (`SVC_TOKEN="Bearer <token>"`). If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). A value that is not a valid header value (for example one with a CR, LF or TAB) skips the check with `... env NAME is not a valid header value`. Set the variable in every probe location. The probe always sends its own `User-Agent`.
+- `headers`: a value is a literal string or `{ "env": "NAME" }`. `NAME` must start with `PULSE_HEADER_` (case-sensitive); the probe never reads another variable for a header. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. The variable replaces the whole header value, so a bearer token needs the scheme in the variable (`PULSE_HEADER_SVC_TOKEN="Bearer <token>"`). If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). A value that is not a valid header value (for example one with a CR, LF or TAB) skips the check with `... env NAME is not a valid header value`. A name without the prefix skips the check with `... env NAME must start with PULSE_HEADER_`. Set the variable in every probe location. Literal header values and bodies are clear text in the checks file and in the api database; use `{ "env" }` for secrets. The probe always sends its own `User-Agent`.
 - `expectedStatus` accepts codes and `"lo-hi"` ranges. The final status after redirects is judged.
+- Redirects: a check with `headers` or a `body` follows redirects in the probe, up to 20, and only within the same origin (scheme, host and port). A redirect to another origin, from https to http, or from http to https ends `down` with reason `redirect to <origin> not followed` (origin only), and the target gets no request. A 301, 302 or 303 on a method other than GET (HEAD included) is not followed: `down` with reason `HTTP <status> redirect not followed for <METHOD>`. More than 20 hops is `down` with `too many redirects`; an unparsable `Location` is `down` with `redirect to invalid location`. A redirect status listed in `expectedStatus` is judged as it is, not followed. Checks without headers and body follow redirects as before.
 - Header values, env values and bodies are never logged or put in results, reasons or `/metrics`.
 
 ### JSON assertions
@@ -88,7 +89,7 @@ Quoted response values are cut to 80 characters with `…`.
 
 Example: `{ "id": "home", "name": "Home", "url": "https://example.com", "intervalMs": 60000, "keyword": "Welcome" }`
 
-Example: `{ "id": "svc", "name": "Svc", "url": "https://svc.example/v1", "intervalMs": 60000, "method": "POST", "headers": { "Authorization": { "env": "SVC_TOKEN" } }, "body": "{}", "expectedStatus": [200], "jsonAssert": [{ "pointer": "/status", "equals": "ok" }] }`
+Example: `{ "id": "svc", "name": "Svc", "url": "https://svc.example/v1", "intervalMs": 60000, "method": "POST", "headers": { "Authorization": { "env": "PULSE_HEADER_SVC_TOKEN" } }, "body": "{}", "expectedStatus": [200], "jsonAssert": [{ "pointer": "/status", "equals": "ok" }] }`
 
 
 ### TLS checks
@@ -125,3 +126,7 @@ Only HTTP checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs
 ### Schedule
 
 Each check runs immediately at startup and then every `intervalMs`, measured from the start of the previous run. A check never overlaps with itself: the next run is scheduled only after the previous one, including its result post, has finished. If a run takes longer than the interval, the next one starts at once.
+
+## Migration
+
+Breaking: a header `{ "env": "NAME" }` now needs `NAME` to start with `PULSE_HEADER_`. Checks that reference other names are skipped, with a log line, until renamed. Rename the variable in every probe location and in the checks file, for example `SVC_TOKEN` to `PULSE_HEADER_SVC_TOKEN`.

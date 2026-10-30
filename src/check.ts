@@ -280,18 +280,14 @@ async function attemptHttp(
 ): Promise<Result> {
   try {
     const method = check.method ?? "GET";
-    const res = await deps.fetch(check.url, {
-      method,
-      // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
-      headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
-      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
-      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
-      signal:
-        deps.signal === undefined
-          ? AbortSignal.timeout(timeoutMs)
-          : AbortSignal.any([AbortSignal.timeout(timeoutMs), deps.signal]),
-    });
     const expected = check.expectedStatus ?? DEFAULT_EXPECTED_STATUS;
+    const signal =
+      deps.signal === undefined
+        ? AbortSignal.timeout(timeoutMs)
+        : AbortSignal.any([AbortSignal.timeout(timeoutMs), deps.signal]);
+    const fetched = await fetchFollowing(check, deps, method, expected, signal);
+    if ("stop" in fetched) return done("down", fetched.stop.statusCode, fetched.stop.reason);
+    const res = fetched.res;
     if (!matchesStatus(res.status, expected)) {
       // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
       await res.body?.cancel().catch(() => {});
@@ -308,6 +304,79 @@ async function attemptHttp(
     // A fetch error message can quote a header value or the body, so only the code is used.
     return done("down", null, errorCode(err) ?? "request error");
   }
+}
+
+const MAX_REDIRECTS = 20;
+
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+
+type Fetched = { res: Response } | { stop: { statusCode: number | null; reason: string } };
+
+/** True when the check sends a header or a body of its own: these must not leave the origin. */
+function isSecretBearing(check: HttpLikeCheck): boolean {
+  return Object.keys(check.headers ?? {}).length > 0 || check.body !== undefined;
+}
+
+/**
+ * Sends the request. A check with headers or a body follows redirects here, one hop at a time,
+ * and only within the same origin. Other checks let fetch follow them.
+ */
+async function fetchFollowing(
+  check: HttpLikeCheck,
+  deps: CheckDeps,
+  method: string,
+  expected: ExpectedStatus[],
+  signal: AbortSignal,
+): Promise<Fetched> {
+  const isSecret = isSecretBearing(check);
+  let url = check.url;
+  for (let hops = 0; ; hops++) {
+    const res = await deps.fetch(url, {
+      method,
+      redirect: isSecret ? "manual" : "follow",
+      // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
+      headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
+      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
+      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
+      signal,
+    });
+    const location = res.headers.get("location");
+    if (
+      !isSecret ||
+      !REDIRECT_STATUSES.includes(res.status) ||
+      location === null ||
+      matchesStatus(res.status, expected)
+    ) {
+      return { res };
+    }
+    // Best-effort body cancel of the hop; failure to cancel is irrelevant.
+    await res.body?.cancel().catch(() => {});
+    const next = nextHop(res.status, method, location, url, hops);
+    if ("reason" in next) return { stop: { statusCode: res.status, reason: next.reason } };
+    url = next.url;
+  }
+}
+
+/** The next URL of a redirect, or the reason it is not followed. */
+function nextHop(
+  status: number,
+  method: string,
+  location: string,
+  url: string,
+  hops: number,
+): { url: string } | { reason: string } {
+  if (status <= 303 && method !== "GET")
+    return { reason: `HTTP ${status} redirect not followed for ${method}` };
+  let target: URL;
+  try {
+    target = new URL(location, url);
+  } catch {
+    return { reason: "redirect to invalid location" };
+  }
+  const current = new URL(url);
+  if (target.origin !== current.origin)
+    return { reason: `redirect to ${target.origin} not followed` };
+  return hops >= MAX_REDIRECTS ? { reason: "too many redirects" } : { url: target.href };
 }
 
 /** Header values as strings; an unresolved `{ env }` reference is dropped (the client skips such checks). */
