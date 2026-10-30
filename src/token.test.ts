@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { parseToken } from "./token.ts";
 
 test("rejects a missing or blank token", () => {

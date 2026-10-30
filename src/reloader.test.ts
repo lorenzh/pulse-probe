@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import type { ProbeCheck } from "./client.ts";
 import { startReloader } from "./reloader.ts";
 import type { Timer } from "./scheduler.ts";

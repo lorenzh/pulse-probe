@@ -17,7 +17,7 @@ export interface ClientDeps {
   token?: string;
   /** Environment that `{ env }` header values resolve from. Defaults to an empty map. */
   env?: Record<string, string | undefined>;
-  fetch: typeof fetch;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   sleep: (ms: number) => Promise<void>;
   log: (message: string) => void;
   /** Timer injection for the request timeout; defaults to `setTimeout`. Returns a cancel function. */

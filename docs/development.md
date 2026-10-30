@@ -5,8 +5,8 @@ Repository rules for agents and people are in [AGENTS.md](../AGENTS.md). Cross-r
 ## Run locally
 
 ```sh
-npm ci
-PULSE_PROBE_TOKEN='<token>' npm start
+bun install --frozen-lockfile
+PULSE_PROBE_TOKEN='<token>' bun run start
 ```
 
 Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running pulse-api (default `http://localhost:3000`).
@@ -27,10 +27,10 @@ Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running 
 ## Checks
 
 ```sh
-npm run check   # lint, typecheck and tests (with coverage gate)
-npm run lint    # Biome and SonarJS (ESLint), changes nothing
-npm run format  # Biome: apply formatting and safe lint fixes
-node --test src/check.test.ts
+bun run check   # lint, typecheck and tests (with coverage gate)
+bun run lint    # Biome and SonarJS (ESLint), changes nothing
+bun run format  # Biome: apply formatting and safe lint fixes
+bun test src/check.test.ts
 ```
 
 - Tests are written first (red, green, refactor) and sit next to the code as `src/<module>.test.ts`.
@@ -41,4 +41,4 @@ node --test src/check.test.ts
 
 ## Hooks and CI
 
-`npm ci` installs a Lefthook pre-commit hook that runs `biome check` and ESLint (SonarJS) on the staged files. CI runs the same steps as `npm run check` through the shared workflow in `lorenzh/pulse-config`, which also holds the shared Biome, TypeScript, Lefthook and ESLint configuration. Change a rule there, not here.
+`bun install --frozen-lockfile` installs a Lefthook pre-commit hook that runs `biome check` and ESLint (SonarJS) on the staged files. CI runs the same steps as `bun run check` through the shared workflow in `lorenzh/pulse-config`, which also holds the shared Biome, TypeScript, Lefthook and ESLint configuration. Change a rule there, not here.

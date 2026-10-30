@@ -1,10 +1,16 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
-import { fetchChecks, loadChecks, postResult, StartupAbortedError } from "./client.ts";
+import {
+  type ClientDeps,
+  fetchChecks,
+  loadChecks,
+  postResult,
+  StartupAbortedError,
+} from "./client.ts";
 
 const result: Result = {
   checkId: "a",
@@ -180,7 +186,7 @@ test("fetchChecks passes tls checks through and rebuilds http checks", async () 
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5, state: "up" },
   ];
-  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const fakeFetch = (async () => Response.json(body)) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -219,7 +225,7 @@ test("fetchChecks skips invalid checks, logs their id and keeps the others", asy
         { name: "noid", url: "http://x", intervalMs: 5 },
       ],
       { headers: { "x-pulse-contract": "1" } },
-    )) as unknown as typeof fetch;
+    )) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -250,7 +256,7 @@ test("loadChecks drops heartbeat checks without a request or a log line", async 
       ],
       { headers: { "x-pulse-contract": "1" } },
     );
-  }) as unknown as typeof fetch;
+  }) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await loadChecks("http://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
   assert.deepEqual(
@@ -281,7 +287,7 @@ test("loadChecks skips an empty url or host and names the check id", async () =>
         },
       ],
       { headers: { "x-pulse-contract": "1" } },
-    )) as unknown as typeof fetch;
+    )) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await loadChecks("http://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
   assert.deepEqual(
@@ -305,7 +311,7 @@ test("fetchChecks times out on stalled headers and retries", async () => {
     calls++;
     if (calls === 1) return new Promise(() => {});
     return Promise.resolve(Response.json([]));
-  }) as unknown as typeof fetch;
+  }) as unknown as unknown as typeof fetch;
   const logs: string[] = [];
   const sleeps: number[] = [];
   let firstTimer = true;
@@ -330,7 +336,8 @@ test("fetchChecks times out on stalled headers and retries", async () => {
 
 test("loadChecks times out on a stalled body", async () => {
   const stalled = new ReadableStream<Uint8Array>({ start() {} });
-  const fakeFetch = (async () => new Response(stalled, { status: 200 })) as unknown as typeof fetch;
+  const fakeFetch = (async () =>
+    new Response(stalled, { status: 200 })) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const p = loadChecks("http://api", {
     fetch: fakeFetch,
@@ -345,7 +352,8 @@ test("loadChecks times out on a stalled body", async () => {
 
 test("loadChecks rejects a body above the size cap", async () => {
   const big = `["${"x".repeat(5 * 1024 * 1024)}"]`;
-  const fakeFetch = (async () => new Response(big, { status: 200 })) as unknown as typeof fetch;
+  const fakeFetch = (async () =>
+    new Response(big, { status: 200 })) as unknown as unknown as typeof fetch;
   const p = loadChecks(
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     "http://api",
@@ -372,7 +380,7 @@ test("fetchChecks forwards retries and retryDelayMs", async () => {
     // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
     { id: "h", name: "H", url: "http://x", intervalMs: 5000, retries: 2, retryDelayMs: 300 },
   ];
-  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const fakeFetch = (async () => Response.json(body)) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -385,7 +393,7 @@ test("fetchChecks forwards retries and retryDelayMs", async () => {
 test("fetchChecks forwards latencyObjectiveMs", async () => {
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const body = [{ id: "h", name: "H", url: "http://x", intervalMs: 5000, latencyObjectiveMs: 500 }];
-  const fakeFetch = (async () => Response.json(body)) as unknown as typeof fetch;
+  const fakeFetch = (async () => Response.json(body)) as unknown as unknown as typeof fetch;
   // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
   const checks = await fetchChecks("http://api", {
     fetch: fakeFetch,
@@ -434,7 +442,7 @@ test("fetchChecks sends no Authorization header", async () => {
 });
 
 test("fetchChecks keeps the keyword so runCheck marks a body without it down", async () => {
-  const fakeFetch: typeof fetch = async (input) => {
+  const fakeFetch: ClientDeps["fetch"] = async (input) => {
     if (String(input).endsWith("/checks")) {
       return Response.json([
         {
@@ -475,7 +483,9 @@ const okBody = [{ id: "h", name: "H", url: "https://x", intervalMs: 5 }];
 test("fetchChecks accepts a matching contract version without logging", async () => {
   const logs: string[] = [];
   const fakeFetch = (async () =>
-    Response.json(okBody, { headers: { [versionHeader]: "1" } })) as unknown as typeof fetch;
+    Response.json(okBody, {
+      headers: { [versionHeader]: "1" },
+    })) as unknown as unknown as typeof fetch;
   const checks = await fetchChecks("https://api", {
     fetch: fakeFetch,
     sleep: async () => {},
@@ -490,7 +500,7 @@ test("loadChecks logs an absent version header once per logger and continues", a
   const log = (m: string): void => {
     logs.push(m);
   };
-  const fakeFetch = (async () => Response.json(okBody)) as unknown as typeof fetch;
+  const fakeFetch = (async () => Response.json(okBody)) as unknown as unknown as typeof fetch;
   assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
   assert.equal((await loadChecks("https://api", { fetch: fakeFetch, log })).length, 1);
   assert.equal(logs.length, 1);
@@ -499,7 +509,8 @@ test("loadChecks logs an absent version header once per logger and continues", a
 
 test("loadChecks logs an absent version header on a 2xx with an invalid body", async () => {
   const logs: string[] = [];
-  const fakeFetch = (async () => Response.json({ not: "an array" })) as unknown as typeof fetch;
+  const fakeFetch = (async () =>
+    Response.json({ not: "an array" })) as unknown as unknown as typeof fetch;
   await assert.rejects(loadChecks("https://api", { fetch: fakeFetch, log: (m) => logs.push(m) }));
   assert.equal(logs.length, 1);
   assert.match(logs[0] ?? "", /x-pulse-contract/);
@@ -507,7 +518,8 @@ test("loadChecks logs an absent version header on a 2xx with an invalid body", a
 
 test("loadChecks stays quiet about an absent version header on a non-2xx", async () => {
   const logs: string[] = [];
-  const fakeFetch = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+  const fakeFetch = (async () =>
+    new Response("no", { status: 500 })) as unknown as unknown as typeof fetch;
   await assert.rejects(loadChecks("https://api", { fetch: fakeFetch, log: (m) => logs.push(m) }));
   assert.deepEqual(logs, []);
 });
@@ -517,7 +529,7 @@ test("fetchChecks treats a contract version mismatch as a failed fetch and retri
   const fakeFetch = (async () => {
     calls++;
     return Response.json(okBody, { headers: { [versionHeader]: calls === 1 ? "2" : "1" } });
-  }) as unknown as typeof fetch;
+  }) as unknown as unknown as typeof fetch;
   const logs: string[] = [];
   const sleeps: number[] = [];
   const checks = await fetchChecks(
@@ -543,7 +555,7 @@ test("postResult logs a contract version mismatch and keeps the outcome", async 
     new Response(null, {
       status: 204,
       headers: { [versionHeader]: "9" },
-    })) as unknown as typeof fetch;
+    })) as unknown as unknown as typeof fetch;
   const outcome = await postResult("https://api", result, {
     fetch: fakeFetch,
     log: (m) => logs.push(m),
@@ -556,7 +568,7 @@ test("postResult logs a contract version mismatch and keeps the outcome", async 
 
 test("fetchChecks stops waiting for a retry when the signal aborts", async () => {
   const controller = new AbortController();
-  const failingFetch: typeof fetch = async () => {
+  const failingFetch: ClientDeps["fetch"] = async () => {
     throw new Error("down");
   };
   const result = fetchChecks("https://api", {
@@ -575,7 +587,7 @@ test("fetchChecks stops waiting for a retry when the signal aborts", async () =>
 });
 
 test("fetchChecks throws at once when the signal is already aborted", async () => {
-  const failingFetch: typeof fetch = async () => {
+  const failingFetch: ClientDeps["fetch"] = async () => {
     throw new Error("must not be called");
   };
   await assert.rejects(

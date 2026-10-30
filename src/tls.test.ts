@@ -1,10 +1,10 @@
+import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
 import tls from "node:tls";
 import type { TlsCheck } from "@lorenzh/pulse-contract";
 import { DAY_MS, runCheck } from "./check.ts";

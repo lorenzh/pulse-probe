@@ -1,8 +1,8 @@
+import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 
 const MAIN = new URL("./main.ts", import.meta.url).pathname;
 

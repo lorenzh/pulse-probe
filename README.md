@@ -8,11 +8,11 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 ## Quick start
 
-Requires Node 24 or newer and a reachable pulse-api that knows your probe token.
+Requires Bun 1.4.0 and a reachable pulse-api that knows your probe token.
 
 ```sh
-npm ci
-PULSE_API_URL=http://localhost:3000 PULSE_LOCATION=default PULSE_PROBE_TOKEN='<token>' npm start
+bun install --frozen-lockfile
+PULSE_API_URL=http://localhost:3000 PULSE_LOCATION=default PULSE_PROBE_TOKEN='<token>' bun run start
 ```
 
 With Docker:
@@ -30,6 +30,6 @@ See [docs/index.md](docs/index.md): install, configuration, operation, troublesh
 
 ## Development
 
-Run `npm run check` (lint, typecheck, tests). See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
+Run `bun run check` (lint, typecheck, tests). See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
 
 Licensed under the MIT licence, see [LICENSE](LICENSE).
