@@ -42,3 +42,22 @@ test("loadSettings reads the health listener with the default host", () => {
     { port: 0, host: "0.0.0.0" },
   );
 });
+
+for (const value of ["bogus", "", "  ", "file:///x", "https://u:p@x"]) {
+  test(`loadSettings rejects PULSE_API_URL=${JSON.stringify(value)} naming the variable`, () => {
+    assert.throws(
+      () => loadSettings({ ...good, PULSE_API_URL: value }),
+      (err: unknown) =>
+        err instanceof StartupError &&
+        err.message.includes("PULSE_API_URL") &&
+        !err.message.includes("\n"),
+    );
+  });
+}
+
+test("loadSettings removes the trailing slash of PULSE_API_URL", () => {
+  assert.equal(
+    loadSettings({ ...good, PULSE_API_URL: "https://api:3000/" }).apiUrl,
+    "https://api:3000",
+  );
+});

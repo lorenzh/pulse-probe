@@ -9,7 +9,7 @@ import {
   StartupError,
   startOpsServer,
 } from "@lorenzh/pulse-kit";
-import { runCheck } from "./check.ts";
+import { startCheckScheduler } from "./check-scheduler.ts";
 import type { ProbeCheck } from "./client.ts";
 import {
   fetchChecks,
@@ -22,7 +22,6 @@ import {
 import { monotonic, now } from "./clock.ts";
 import { createMetrics, type Metrics, type PostMetricOutcome } from "./metrics.ts";
 import { startReloader } from "./reloader.ts";
-import { startScheduler } from "./scheduler.ts";
 import { loadSettings, type Settings } from "./settings.ts";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -170,21 +169,14 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
     if (outcome === "unknown-check") reloader.requestReload();
   };
 
-  const scheduler = startScheduler(checks, {
+  const scheduler = startCheckScheduler(checks, {
     timer,
-    now: monotonic,
-    run: (check) =>
-      track(
-        runCheck(check, {
-          fetch,
-          now,
-          monotonic,
-          sleep: abortableSleep,
-          location: settings.location,
-          signal: shutdown.signal,
-        }),
-      ),
-    onResult: (result) => track(onResult(result)),
+    fetch,
+    sleep: abortableSleep,
+    location: settings.location,
+    signal: shutdown.signal,
+    track,
+    onResult,
     onError: (check, err) => {
       if (isShuttingDown) return;
       logger.error(`check ${check.id} failed unexpectedly: ${String(err)}`);
