@@ -135,6 +135,33 @@ test("only one request is in flight while the sender runs", async () => {
   assert.deepEqual(t.posted, ["c1", "c1", "c2", "c3"]);
 });
 
+test("an evicted in-flight head that is accepted counts as delivered, not dropped", async () => {
+  const t = setup({ maxResults: 1 });
+  t.outcomes.push("retry");
+  await t.buffer.submit(result(1));
+  t.state.isHeld = true;
+  await t.tick();
+  await t.buffer.submit(result(2)); // evicts c1 while its post is in flight
+  t.state.isHeld = false;
+  await t.release();
+  await t.buffer.idle();
+  assert.deepEqual(t.drops, []);
+  assert.equal(t.late(), 2);
+  assert.ok(t.logs.includes("buffer empty again: 2 delivered, 0 dropped"));
+});
+
+test("an evicted in-flight head that fails is counted once as buffer_full", async () => {
+  const t = setup({ maxResults: 1 });
+  t.outcomes.push("retry", "retry");
+  await t.buffer.submit(result(1));
+  t.state.isHeld = true;
+  await t.tick();
+  await t.buffer.submit(result(2));
+  t.state.isHeld = false;
+  await t.release();
+  assert.deepEqual(t.drops, ["buffer_full"]);
+});
+
 test("backoff doubles from 1 s to the 30 s cap and resets after a success", async () => {
   const t = setup({}, "retry");
   await t.buffer.submit(result(1));

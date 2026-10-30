@@ -39,6 +39,8 @@ export function createResultBuffer(deps: BufferDeps): ResultBuffer {
   let isBuffering = false;
   let delivered = 0;
   let dropped = 0;
+  // The head being posted; a full buffer may evict it while the post is in flight.
+  let inFlight: Result | undefined;
 
   const isTooOld = (r: Result): boolean => deps.now() - r.timestamp > deps.maxAgeMs;
 
@@ -59,7 +61,9 @@ export function createResultBuffer(deps: BufferDeps): ResultBuffer {
     } else {
       if (queue.length >= deps.maxResults) {
         const oldest = queue.shift();
-        if (oldest !== undefined) drop(isTooOld(oldest) ? "too_old" : "buffer_full");
+        // The in-flight head is counted once, by sendHead, when its post ends.
+        if (oldest !== undefined && oldest !== inFlight)
+          drop(isTooOld(oldest) ? "too_old" : "buffer_full");
       }
       queue.push(result);
     }
@@ -73,11 +77,26 @@ export function createResultBuffer(deps: BufferDeps): ResultBuffer {
   };
 
   const sendHead = async (head: Result): Promise<"sent" | "retry"> => {
-    const outcome = await deps.post(head);
+    inFlight = head;
+    let outcome: PostOutcome;
+    try {
+      outcome = await deps.post(head);
+    } finally {
+      inFlight = undefined;
+    }
     deps.onPost(head, outcome);
+    const isEvicted = queue[0] !== head;
+    if (isEvicted) {
+      // A full buffer evicted the head during the post: count its outcome here, once.
+      if (outcome === "accepted") {
+        delivered++;
+        deps.onDeliveredLate();
+      } else {
+        drop(outcome === "retry" ? "buffer_full" : "rejected");
+      }
+    }
     if (outcome === "retry") return "retry";
-    // The head is gone when a full buffer evicted it during the post; that was counted already.
-    if (queue[0] === head) {
+    if (!isEvicted) {
       queue.shift();
       if (outcome === "accepted") {
         delivered++;

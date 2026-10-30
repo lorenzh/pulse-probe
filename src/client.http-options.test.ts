@@ -161,7 +161,8 @@ test("loadChecks skips env names without the PULSE_HEADER_ prefix and never read
   }
 });
 
-test("loadChecks resolves PULSE_HEADER_X", async () => {
+// compat: passes on the code before the redirect rewrite; it guards behavior that must not change.
+test("compat: loadChecks resolves PULSE_HEADER_X", async () => {
   const check = { ...rich, headers: { "X-Key": { env: "PULSE_HEADER_X" } } };
   const a = api({ "/probe/checks": () => Response.json([check], wire) });
   const checks = await loadChecks("https://api", {
