@@ -157,6 +157,7 @@ test("an evicted in-flight head that fails is counted once as buffer_full", asyn
   t.state.isHeld = true;
   await t.tick();
   await t.buffer.submit(result(2));
+  assert.deepEqual(t.drops, []);
   t.state.isHeld = false;
   await t.release();
   assert.deepEqual(t.drops, ["buffer_full"]);
