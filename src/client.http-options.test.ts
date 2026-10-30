@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { loadChecks } from "./client.ts";
 
 const wire = { headers: { "x-pulse-contract": "1" } };
@@ -20,7 +20,7 @@ function api(
     const route = routes[new URL(url).pathname];
     return route === undefined ? new Response("", { status: 404 }) : route();
   };
-  return { fetch: impl as typeof fetch, calls };
+  return { fetch: impl as unknown as typeof fetch, calls };
 }
 
 const rich = {

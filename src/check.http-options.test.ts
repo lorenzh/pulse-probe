@@ -1,7 +1,7 @@
+import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import { MAX_KEYWORD_BODY_BYTES, runCheck } from "./check.ts";
 import type { ProbeCheck } from "./client.ts";
@@ -28,7 +28,7 @@ function fake(status: number, body: string | null = null, seen: Seen[] = []) {
     });
     return new Response(body, { status });
   };
-  return { fetch: impl as typeof fetch, seen };
+  return { fetch: impl as unknown as typeof fetch, seen };
 }
 
 const base = { id: "h", name: "H", url: "https://x.test/", intervalMs: 100_000 };
@@ -238,11 +238,11 @@ test("secrets never reach the result or the reason", async () => {
   assert.ok(!text.includes(bodySecret));
   const failing = await run({ ...base, headers: { Authorization: secret } }, (async () => {
     throw Object.assign(new Error(`bad ${secret}`), { cause: { code: "ECONNRESET" } });
-  }) as typeof fetch);
+  }) as unknown as typeof fetch);
   assert.equal(failing.reason, "ECONNRESET");
   const uncoded = await run({ ...base, headers: { Authorization: secret } }, (async () => {
     throw new TypeError(`bad ${secret} ${bodySecret}`);
-  }) as typeof fetch);
+  }) as unknown as typeof fetch);
   assert.equal(uncoded.reason, "request error");
 });
 

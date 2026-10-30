@@ -1,5 +1,5 @@
+import { setSystemTime, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mock, test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import type { ProbeCheck } from "./client.ts";
 import { monotonic } from "./clock.ts";
@@ -231,7 +231,7 @@ test("a removed check mid-run never posts", async () => {
 
 test("a wall clock step back does not pause the scheduler", async () => {
   // Steps the real Date.now back by an hour on every run. A scheduler that read it would stall.
-  mock.timers.enable({ apis: ["Date"], now: 10_000_000 });
+  setSystemTime(new Date(10_000_000));
   try {
     const f = fakeTimer();
     let runs = 0;
@@ -241,7 +241,7 @@ test("a wall clock step back does not pause the scheduler", async () => {
       run: async (c) => {
         runs++;
         const before = Date.now();
-        mock.timers.setTime(before - 3_600_000);
+        setSystemTime(new Date(before - 3_600_000));
         assert.ok(Date.now() < before);
         return { ...mk(c), timestamp: Date.now() };
       },
@@ -253,7 +253,7 @@ test("a wall clock step back does not pause the scheduler", async () => {
     assert.equal(runs, 3);
     s.stop();
   } finally {
-    mock.timers.reset();
+    setSystemTime();
   }
 });
 

@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { parseReloadMs } from "./reload-interval.ts";
 
 test("defaults to 60000 when unset or blank", () => {

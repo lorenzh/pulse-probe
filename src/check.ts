@@ -57,7 +57,7 @@ export const tlsConnect: TlsConnect = ({ host, port, timeoutMs }) =>
   });
 
 export interface CheckDeps {
-  fetch: typeof fetch;
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   /** Defaults to the real TLS connection. */
   tlsConnect?: TlsConnect;
   /** Wall clock (epoch ms): the result `timestamp` and the TLS expiry comparison. */
@@ -72,8 +72,19 @@ export interface CheckDeps {
   signal?: AbortSignal;
 }
 
+/** Bun names some network errors differently from Node; reasons keep the Node codes. */
+const BUN_ERROR_CODES: Record<string, string> = {
+  ConnectionRefused: "ECONNREFUSED",
+  ConnectionClosed: "ECONNRESET",
+};
+
 /** The error code of `err` or its cause, if any. */
 function errorCode(err: unknown): string | undefined {
+  const code = rawErrorCode(err);
+  return code === undefined ? undefined : (BUN_ERROR_CODES[code] ?? code);
+}
+
+function rawErrorCode(err: unknown): string | undefined {
   if (!(err instanceof Error)) return undefined;
   const cause = (err as { cause?: unknown }).cause;
   if (cause && typeof cause === "object") {

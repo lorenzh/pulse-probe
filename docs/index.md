@@ -2,7 +2,7 @@
 
 The probe fetches the checks from pulse-api, runs them and posts the results back. It serves HTTP only on the optional health and metrics listener, and has no database.
 
-- [install.md](install.md): Node and Docker install, quick start.
+- [install.md](install.md): Bun and Docker install, quick start.
 - [configuration.md](configuration.md): environment variables, location and token rules, check types and retries.
 - [operation.md](operation.md): logs, restarts, token and location changes.
 - [troubleshooting.md](troubleshooting.md): startup errors and dropped results, with causes and actions.

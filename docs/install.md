@@ -1,12 +1,12 @@
 # Install
 
-## Node
+## Bun
 
-Requires Node 24 or newer.
+Requires Bun 1.4.0.
 
 ```sh
-npm ci
-PULSE_API_URL=http://localhost:3000 PULSE_PROBE_TOKEN='<token>' npm start
+bun install --frozen-lockfile
+PULSE_API_URL=http://localhost:3000 PULSE_PROBE_TOKEN='<token>' bun run start
 ```
 
 The probe needs a reachable pulse-api and a probe token that the API knows. See [configuration.md](configuration.md#probe-token).
@@ -16,13 +16,13 @@ Replace `<token>`, `<token-a>` and `<token-b>` with the real tokens.
 Run one probe per location, each with its own `PULSE_LOCATION` and token:
 
 ```sh
-PULSE_LOCATION=a PULSE_PROBE_TOKEN='<token-a>' npm start
-PULSE_LOCATION=b PULSE_PROBE_TOKEN='<token-b>' npm start
+PULSE_LOCATION=a PULSE_PROBE_TOKEN='<token-a>' bun run start
+PULSE_LOCATION=b PULSE_PROBE_TOKEN='<token-b>' bun run start
 ```
 
 ## Docker
 
-The image is multi-stage on `node:24-alpine`. It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `node` user with `node src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` on `/healthz` (liveness; `/readyz` reports readiness). It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` and `pulse-kit` dependencies and uses no token.
+The image is multi-stage on `oven/bun:1.4.0-alpine` (pinned by digest). It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `bun` user with `bun src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` on `/healthz` (liveness; `/readyz` reports readiness). It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` and `pulse-kit` dependencies and uses no token.
 
 ```sh
 docker build --tag pulse-probe:local .

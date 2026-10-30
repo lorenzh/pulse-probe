@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { parseLocation, userAgent } from "./location.ts";
 
 test("defaults when unset or blank", () => {
