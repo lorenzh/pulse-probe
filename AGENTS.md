@@ -100,7 +100,7 @@ repository. Bun 1.4.0 (runtime, package manager, test runner), ESM, strict TypeS
 
 - Entry point is `src/main.ts` (`bun run start`): it fetches the checks from the API, then wires the real `fetch`, `now`, `sleep`, `setTimeout` and `clearTimeout` into the other modules.
 - Shared runtime helpers (env readers, `runService`, ops server, metrics registry, logger) come from `@lorenzh/pulse-kit`, pinned to a full commit SHA of its `main`.
-- Modules: `check.ts` runs one check (HTTP with retries, or TLS certificate expiry), `client.ts` talks to pulse-api (`GET /checks`, `POST /results`), `location.ts` parses `PULSE_LOCATION`, `scheduler.ts` runs each check on its interval without overlap.
+- Modules: `buffer.ts` buffers and re-sends results the API did not take, `check.ts` runs one check (HTTP with retries, or TLS certificate expiry), `client.ts` talks to pulse-api (`GET /checks`, `POST /results`), `location.ts` parses `PULSE_LOCATION`, `scheduler.ts` runs each check on its interval without overlap.
 - Retries, timeouts and the schedule use the injected `sleep`, `setTimeout` and `now`; tests never wait in real time.
 
 ## Shared tooling configuration

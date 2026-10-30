@@ -11,12 +11,26 @@ test("loadSettings applies the defaults", () => {
   assert.equal(s.location, "default");
   assert.equal(s.logLevel, "info");
   assert.equal(s.health, undefined);
+  assert.equal(s.bufferMaxResults, 10_000);
+  assert.equal(s.bufferMaxAgeMs, 3_600_000);
+});
+
+test("loadSettings reads the buffer settings", () => {
+  const s = loadSettings({
+    ...good,
+    PULSE_BUFFER_MAX_RESULTS: "5",
+    PULSE_BUFFER_MAX_AGE_MS: "2147483647",
+  });
+  assert.equal(s.bufferMaxResults, 5);
+  assert.equal(s.bufferMaxAgeMs, 2_147_483_647);
 });
 
 for (const [name, env] of [
   ["PULSE_PROBE_TOKEN", {}],
   ["PULSE_LOCATION", { ...good, PULSE_LOCATION: "x".repeat(65) }],
   ["PULSE_CHECKS_RELOAD_MS", { ...good, PULSE_CHECKS_RELOAD_MS: "10" }],
+  ["PULSE_BUFFER_MAX_RESULTS", { ...good, PULSE_BUFFER_MAX_RESULTS: "0" }],
+  ["PULSE_BUFFER_MAX_AGE_MS", { ...good, PULSE_BUFFER_MAX_AGE_MS: "2147483648" }],
   ["PULSE_LOG_LEVEL", { ...good, PULSE_LOG_LEVEL: "loud" }],
   ["PULSE_HEALTH_PORT", { ...good, PULSE_HEALTH_PORT: "abc" }],
 ] as const) {

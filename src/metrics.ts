@@ -1,10 +1,13 @@
 import type { Result } from "@lorenzh/pulse-contract";
 import { createRegistry, DURATION_BUCKETS_SECONDS } from "@lorenzh/pulse-kit";
+import type { DropReason } from "./buffer.ts";
 import type { ProbeCheck } from "./client.ts";
 
 export { DURATION_BUCKETS_SECONDS };
 
 export const CHECK_STATES = ["up", "degraded", "down"] as const;
+
+export const DROP_REASONS = ["buffer_full", "too_old", "rejected"] as const;
 
 export type PostMetricOutcome = "ok" | "rejected" | "unknown-check" | "error";
 
@@ -13,6 +16,9 @@ export interface Metrics {
   setChecks(checks: ProbeCheck[]): void;
   recordResult(result: Result): void;
   recordPost(checkId: string, outcome: PostMetricOutcome): void;
+  setBuffered(size: number): void;
+  recordDrop(reason: DropReason): void;
+  recordDeliveredLate(): void;
   /** Prometheus text format. Holds check ids only, never URLs, keywords or tokens. */
   render(): string;
 }
@@ -36,11 +42,27 @@ export function createMetrics(): Metrics {
     "pulse_probe_results_posted_total",
     "Results posted to the API, by outcome.",
   );
+  const buffered = registry.gauge(
+    "pulse_probe_buffered_results",
+    "Results waiting in the buffer for the API.",
+  );
+  const dropped = registry.counter(
+    "pulse_probe_results_dropped_total",
+    "Results dropped without delivery, by reason.",
+  );
+  const deliveredLate = registry.counter(
+    "pulse_probe_results_delivered_late_total",
+    "Results delivered from the buffer instead of a direct post.",
+  );
+  for (const reason of DROP_REASONS) dropped.inc({ reason }, 0);
+  deliveredLate.inc({}, 0);
+  let bufferedSize = 0;
   // Current state per configured check, in configuration order.
   const states = new Map<string, Result["status"] | undefined>();
 
   registry.collect(() => {
     up.set(1);
+    buffered.set(bufferedSize);
     configured.set(states.size);
     for (const [id, current] of states) {
       for (const state of CHECK_STATES) {
@@ -69,6 +91,15 @@ export function createMetrics(): Metrics {
     recordPost(checkId, outcome) {
       if (!states.has(checkId)) return;
       posted.inc({ check: checkId, outcome });
+    },
+    setBuffered(size) {
+      bufferedSize = size;
+    },
+    recordDrop(reason) {
+      dropped.inc({ reason });
+    },
+    recordDeliveredLate() {
+      deliveredLate.inc();
     },
     render: () => registry.render(),
   };

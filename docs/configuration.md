@@ -4,19 +4,28 @@
 
 These are all the variables the code reads (`src/main.ts`).
 
-| Variable                 | Default                 | Meaning                                                                                                                                        |
-| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PULSE_API_URL`          | `http://localhost:3000` | Base URL of pulse-api. Must be an http(s) URL without credentials, query or fragment; empty or invalid exits 2. The trailing slash is removed. |
-| `PULSE_LOCATION`         | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).                                                                |
-| `PULSE_PROBE_TOKEN`      | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                                                                          |
-| `PULSE_CHECKS_RELOAD_MS` | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                     |
-| `PULSE_LOG_LEVEL`        | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                        |
-| `PULSE_HEALTH_PORT`      | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100.                                                      |
-| `PULSE_HEALTH_HOST`      | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                |
+| Variable                   | Default                 | Meaning                                                                                                                                                |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PULSE_API_URL`            | `http://localhost:3000` | Base URL of pulse-api. Must be an http(s) URL without credentials, query or fragment; empty or invalid exits 2. The trailing slash is removed.         |
+| `PULSE_LOCATION`           | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).                                                                        |
+| `PULSE_PROBE_TOKEN`        | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                                                                                  |
+| `PULSE_CHECKS_RELOAD_MS`   | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                             |
+| `PULSE_BUFFER_MAX_RESULTS` | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                              |
+| `PULSE_BUFFER_MAX_AGE_MS`  | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400. |
+| `PULSE_LOG_LEVEL`          | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                                |
+| `PULSE_HEALTH_PORT`        | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100.                                                              |
+| `PULSE_HEALTH_HOST`        | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                        |
 
 A bad value exits with code 2 and one line `pulse-probe: <message>` naming the variable. See [operation](operation.md#exit-codes).
 
 If the health listener cannot bind (port in use, no permission, unknown address), the probe exits with code 2 and `pulse-probe: cannot listen on <host>:<port> (PULSE_HEALTH_HOST/PULSE_HEALTH_PORT): PULSE_HEALTH_PORT: cannot listen (EADDRINUSE)`. The last code is `EADDRINUSE`, `EACCES` or `EADDRNOTAVAIL`.
+
+## Result buffer
+
+- A result the probe cannot deliver (network error, timeout, HTTP 429 or 5xx) goes into an in-memory first-in first-out buffer of at most `PULSE_BUFFER_MAX_RESULTS` results. One sender delivers it oldest first once pulse-api answers again.
+- A result older than `PULSE_BUFFER_MAX_AGE_MS` is dropped. When the buffer is full, the oldest result is dropped.
+- An invalid value of either setting makes the probe exit at startup with a message naming the variable.
+- Memory: a full default buffer (10 000 results) raised the RSS by about 17 MB in a measurement with Bun 1.4.0.
 
 ## Checks reload
 

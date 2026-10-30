@@ -45,10 +45,11 @@ export const RETRY_MS = 10_000;
 export const FETCH_TIMEOUT_MS = 10_000;
 
 /**
- * `unknown-check` means the API answered 404: the check list is out of date.
- * `dropped` is any other answer than 204; `failed` is a network error or timeout.
+ * `retry` is a network error, timeout, 429 or 5xx: the result may succeed later.
+ * `rejected` never succeeds (400, 401, 403, other 4xx, or a 2xx/3xx that is not 204).
+ * `unknown-check` is a 404: the check list is out of date; the result is dropped.
  */
-export type PostOutcome = "accepted" | "dropped" | "unknown-check" | "failed";
+export type PostOutcome = "accepted" | "retry" | "rejected" | "unknown-check";
 
 function join(baseUrl: string, path: string): string {
   let end = baseUrl.length;
@@ -300,7 +301,7 @@ export async function fetchChecks(
   }
 }
 
-/** Posts a result. Failures are logged and dropped. Returns the outcome. */
+/** Posts a result once. Final drops are logged; retryable failures are not. Returns the outcome. */
 export async function postResult(
   baseUrl: string,
   result: Result,
@@ -322,21 +323,18 @@ export async function postResult(
     if (version.status === "mismatch") {
       deps.log(`API answered POST /results with a contract version mismatch: ${version.error}`);
     }
+    if (res.status === 204) return "accepted";
+    if (res.status === 429 || res.status >= 500) return "retry";
     if (res.status === 401 || res.status === 403) {
       deps.log(
         `dropping result for ${result.checkId}: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`,
       );
-      return "dropped";
+      return "rejected";
     }
-    if (res.status !== 204) {
-      deps.log(`dropping result for ${result.checkId}: API answered HTTP ${res.status}`);
-      return res.status === 404 ? "unknown-check" : "dropped";
-    }
-    return "accepted";
-  } catch (err) {
-    deps.log(
-      `dropping result for ${result.checkId}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return "failed";
+    deps.log(`dropping result for ${result.checkId}: API answered HTTP ${res.status}`);
+    return res.status === 404 ? "unknown-check" : "rejected";
+  } catch {
+    // Network error or timeout: the buffer logs and retries, so no line per failure.
+    return "retry";
   }
 }

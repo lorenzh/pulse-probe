@@ -86,3 +86,20 @@ test("metrics render the exact Prometheus text", () => {
   assert.ok(lines.includes('pulse_probe_check_duration_seconds_sum{check="home"} 3.12'));
   assert.ok(lines.includes('pulse_probe_results_posted_total{check="home",outcome="ok"} 1'));
 });
+
+test("buffer metrics start at zero and follow the buffer", () => {
+  const m = createMetrics();
+  const before = m.render();
+  assert.match(before, /pulse_probe_buffered_results 0/);
+  for (const reason of ["buffer_full", "too_old", "rejected"]) {
+    assert.match(before, new RegExp(`pulse_probe_results_dropped_total\\{reason="${reason}"\\} 0`));
+  }
+  assert.match(before, /pulse_probe_results_delivered_late_total 0/);
+  m.setBuffered(3);
+  m.recordDrop("too_old");
+  m.recordDeliveredLate();
+  const after = m.render();
+  assert.match(after, /pulse_probe_buffered_results 3/);
+  assert.match(after, /pulse_probe_results_dropped_total\{reason="too_old"\} 1/);
+  assert.match(after, /pulse_probe_results_delivered_late_total 1/);
+});
