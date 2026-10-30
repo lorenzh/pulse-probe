@@ -32,7 +32,7 @@ const rich = {
   body: '{"x":1}',
   expectedStatus: [200, "300-399"],
   jsonAssert: [{ pointer: "/status", equals: "ok" }],
-  headers: { "Content-Type": "application/json", Authorization: { env: "SVC_TOKEN" } },
+  headers: { "Content-Type": "application/json", Authorization: { env: "PULSE_HEADER_SVC_TOKEN" } },
 };
 
 test("loadChecks calls /probe/checks with the bearer token and copies the new fields", async () => {
@@ -41,7 +41,7 @@ test("loadChecks calls /probe/checks with the bearer token and copies the new fi
     fetch: a.fetch,
     log: () => {},
     token: "probe-tok",
-    env: { SVC_TOKEN: "Bearer s3" },
+    env: { PULSE_HEADER_SVC_TOKEN: "Bearer s3" },
   });
   assert.deepEqual(a.calls, [{ url: "https://api/probe/checks", auth: "Bearer probe-tok" }]);
   assert.deepEqual(checks, [
@@ -75,7 +75,7 @@ test("loadChecks throws on other failures of /probe/checks without a fallback", 
 test("loadChecks skips a check whose env reference is unset or empty, logging names only", async () => {
   const logs: string[] = [];
   const ok = { id: "ok", name: "OK", url: "https://x.test/", intervalMs: 1000 };
-  for (const env of [{}, { SVC_TOKEN: "" }]) {
+  for (const env of [{}, { PULSE_HEADER_SVC_TOKEN: "" }]) {
     logs.length = 0;
     const a = api({ "/probe/checks": () => Response.json([rich, ok], wire) });
     const checks = await loadChecks("https://api", {
@@ -88,7 +88,9 @@ test("loadChecks skips a check whose env reference is unset or empty, logging na
       checks.map((c) => c.id),
       ["ok"],
     );
-    assert.deepEqual(logs, ["skipping check p: header Authorization env SVC_TOKEN is not set"]);
+    assert.deepEqual(logs, [
+      "skipping check p: header Authorization env PULSE_HEADER_SVC_TOKEN is not set",
+    ]);
   }
 });
 
@@ -120,15 +122,53 @@ test("loadChecks skips a check whose env value is not a valid header value, logg
       fetch: a.fetch,
       log: (m) => logs.push(m),
       token: "t",
-      env: { SVC_TOKEN: value },
+      env: { PULSE_HEADER_SVC_TOKEN: value },
     });
     assert.deepEqual(
       checks.map((c) => c.id),
       ["ok"],
     );
     assert.deepEqual(logs, [
-      "skipping check p: header Authorization env SVC_TOKEN is not a valid header value",
+      "skipping check p: header Authorization env PULSE_HEADER_SVC_TOKEN is not a valid header value",
     ]);
     assert.ok(!JSON.stringify({ checks, logs }).includes("sentinel"));
   }
+});
+
+test("loadChecks skips env names without the PULSE_HEADER_ prefix and never reads them", async () => {
+  for (const variable of ["PULSE_PROBE_TOKEN", "HOME", "pulse_header_x"]) {
+    const logs: string[] = [];
+    const reads: string[] = [];
+    const env = new Proxy({} as Record<string, string | undefined>, {
+      get: (_t, key) => {
+        reads.push(String(key));
+        return "sentinel-secret";
+      },
+    });
+    const check = { ...rich, headers: { "X-Key": { env: variable } } };
+    const a = api({ "/probe/checks": () => Response.json([check], wire) });
+    const checks = await loadChecks("https://api", {
+      fetch: a.fetch,
+      log: (m) => logs.push(m),
+      token: "t",
+      env,
+    });
+    assert.deepEqual(checks, []);
+    assert.deepEqual(logs, [
+      `skipping check p: header X-Key env ${variable} must start with PULSE_HEADER_`,
+    ]);
+    assert.deepEqual(reads, []);
+  }
+});
+
+test("loadChecks resolves PULSE_HEADER_X", async () => {
+  const check = { ...rich, headers: { "X-Key": { env: "PULSE_HEADER_X" } } };
+  const a = api({ "/probe/checks": () => Response.json([check], wire) });
+  const checks = await loadChecks("https://api", {
+    fetch: a.fetch,
+    log: () => {},
+    token: "t",
+    env: { PULSE_HEADER_X: "v" },
+  });
+  assert.deepEqual(checks[0]?.headers, { "X-Key": "v" });
 });
