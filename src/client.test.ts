@@ -73,7 +73,7 @@ test("postResult sends Result JSON", async () => {
   }
 });
 
-test("postResult survives an unreachable API", async () => {
+test("postResult asks for a retry when the API is unreachable", async () => {
   const { server, url } = await listen(() => {});
   await close(server);
   const logs: string[] = [];
@@ -82,11 +82,11 @@ test("postResult survives an unreachable API", async () => {
     log: (m) => logs.push(m),
     token: "tok-secret",
   });
-  assert.equal(ok, "failed");
-  assert.equal(logs.length, 1);
+  assert.equal(ok, "retry");
+  assert.equal(logs.length, 0);
 });
 
-test("postResult drops on non-204", async () => {
+test("postResult rejects a 400", async () => {
   const { server, url } = await listen((_q, res) => {
     res.statusCode = 400;
     res.end("{}");
@@ -95,7 +95,7 @@ test("postResult drops on non-204", async () => {
     const logs: string[] = [];
     assert.equal(
       await postResult(url, result, { fetch, log: (m) => logs.push(m), token: "tok-secret" }),
-      "dropped",
+      "rejected",
     );
     assert.equal(logs.length, 1);
   } finally {
@@ -416,7 +416,7 @@ for (const status of [401, 403]) {
         log: (m) => logs.push(m),
         token: "tok-secret",
       });
-      assert.equal(ok, "dropped");
+      assert.equal(ok, "rejected");
       assert.equal(logs.length, 1);
       assert.match(logs[0] ?? "", /token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION/);
       assert.doesNotMatch(logs[0] ?? "", /tok-secret/);
@@ -599,4 +599,38 @@ test("fetchChecks throws at once when the signal is already aborted", async () =
     }),
     StartupAbortedError,
   );
+});
+
+for (const status of [429, 500, 503]) {
+  test(`postResult asks for a retry on HTTP ${status} without a log line`, async () => {
+    const { server, url } = await listen((_q, res) => {
+      res.statusCode = status;
+      res.end("{}");
+    });
+    try {
+      const logs: string[] = [];
+      const outcome = await postResult(url, result, {
+        fetch,
+        log: (m) => logs.push(m),
+        token: "t",
+      });
+      assert.equal(outcome, "retry");
+      assert.deepEqual(logs, []);
+    } finally {
+      await close(server);
+    }
+  });
+}
+
+test("postResult rejects a non-204 success", async () => {
+  const { server, url } = await listen((_q, res) => {
+    res.statusCode = 200;
+    res.end("{}");
+  });
+  try {
+    const outcome = await postResult(url, result, { fetch, log: () => {}, token: "t" });
+    assert.equal(outcome, "rejected");
+  } finally {
+    await close(server);
+  }
 });

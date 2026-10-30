@@ -9,6 +9,7 @@ import {
   StartupError,
   startOpsServer,
 } from "@lorenzh/pulse-kit";
+import { createResultBuffer } from "./buffer.ts";
 import { startCheckScheduler } from "./check-scheduler.ts";
 import type { ProbeCheck } from "./client.ts";
 import {
@@ -35,11 +36,11 @@ function postMetricOutcome(outcome: PostOutcome): PostMetricOutcome {
   switch (outcome) {
     case "accepted":
       return "ok";
-    case "dropped":
+    case "rejected":
       return "rejected";
     case "unknown-check":
       return "unknown-check";
-    case "failed":
+    case "retry":
       return "error";
     default: {
       const unreachable: never = outcome;
@@ -63,6 +64,7 @@ let isShuttingDown = false;
 let health: OpsServer | undefined;
 let loading: Promise<void> = Promise.resolve();
 let stopWork: () => void = () => undefined;
+let finishWork: () => Promise<void> = () => Promise.resolve();
 const inFlight = new Set<Promise<unknown>>();
 
 const track = <T>(work: Promise<T>): Promise<T> => {
@@ -151,6 +153,29 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
     minGapMs: 5000,
   });
 
+  const buffer = createResultBuffer({
+    post: (result) =>
+      postResult(settings.apiUrl, result, {
+        fetch,
+        log,
+        token: settings.token,
+        signal: shutdown.signal,
+      }),
+    now,
+    sleep: abortableSleep,
+    signal: shutdown.signal,
+    log: (message) => logger.warn(message),
+    maxResults: settings.bufferMaxResults,
+    maxAgeMs: settings.bufferMaxAgeMs,
+    onPost: (result, outcome) => {
+      metrics.recordPost(result.checkId, postMetricOutcome(outcome));
+      if (outcome === "unknown-check") reloader.requestReload();
+    },
+    onDrop: (reason) => metrics.recordDrop(reason),
+    onDeliveredLate: () => metrics.recordDeliveredLate(),
+    onSize: (size) => metrics.setBuffered(size),
+  });
+
   const onResult = async (result: Result): Promise<void> => {
     metrics.recordResult(result);
     logger.debug("check result", {
@@ -159,14 +184,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
       latencyMs: result.latencyMs,
       location: result.location,
     });
-    const outcome = await postResult(settings.apiUrl, result, {
-      fetch,
-      log,
-      token: settings.token,
-      signal: shutdown.signal,
-    });
-    metrics.recordPost(result.checkId, postMetricOutcome(outcome));
-    if (outcome === "unknown-check") reloader.requestReload();
+    await buffer.submit(result);
   };
 
   const scheduler = startCheckScheduler(checks, {
@@ -185,6 +203,10 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
   stopWork = (): void => {
     reloader.stop();
     scheduler.stop();
+  };
+  finishWork = async (): Promise<void> => {
+    await buffer.idle();
+    buffer.close();
   };
 }
 
@@ -217,6 +239,7 @@ async function stop(): Promise<void> {
   await loading;
   stopWork();
   await Promise.allSettled([...inFlight, health?.close()]);
+  await finishWork();
 }
 
 await runService({

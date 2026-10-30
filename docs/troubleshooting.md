@@ -32,13 +32,13 @@ Cause: the API reports a different `x-pulse-contract` version than this probe wa
 
 ## `dropping result for <id>: API answered HTTP <code>`
 
-Cause: the API answered something other than 204 (and not 401 or 403), for example 400 for an invalid body. On 404 (unknown or removed check) the probe reloads its checks at once.
+Cause: the API answered something final other than 204 (and not 401 or 403), for example 400 for an invalid body. HTTP 429 and 5xx are not final: those results are buffered. On 404 (unknown or removed check) the probe reloads its checks at once.
 Action: read the API log for the reason. After a checks change, restart only the API.
 
-## `dropping result for <id>: <error>`
+## `API unreachable or busy: buffering results`
 
-Cause: the post failed, for example `fetch failed` or a timeout after 10 seconds.
-Action: check that the API is reachable from the probe.
+Cause: a post failed (network error, 10 s timeout, HTTP 429 or 5xx). The probe keeps the results in memory and delivers them in order when the API answers; `buffer empty again` closes the episode.
+Action: check that the API is reachable from the probe. Watch `pulse_probe_buffered_results` and `pulse_probe_results_dropped_total`. Results beyond `PULSE_BUFFER_MAX_RESULTS` or `PULSE_BUFFER_MAX_AGE_MS` are dropped, and a restart loses the buffer.
 
 ## A check is always `down` with `ECONNREFUSED` or `timeout after <n>ms`
 
