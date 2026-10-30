@@ -1,8 +1,8 @@
 import { setSystemTime, test } from "bun:test";
 import assert from "node:assert/strict";
 import type { Result } from "@lorenzh/pulse-contract";
+import { startCheckScheduler } from "./check-scheduler.ts";
 import type { ProbeCheck } from "./client.ts";
-import { monotonic } from "./clock.ts";
 import { startScheduler, type Timer } from "./scheduler.ts";
 
 async function flush(): Promise<void> {
@@ -230,22 +230,28 @@ test("a removed check mid-run never posts", async () => {
 });
 
 test("a wall clock step back does not pause the scheduler", async () => {
-  // Steps the real Date.now back by an hour on every run. A scheduler that read it would stall.
+  // Steps the real Date.now back by an hour on every request. The wiring must not read it.
   setSystemTime(new Date(10_000_000));
   try {
     const f = fakeTimer();
     let runs = 0;
-    const s = startScheduler([check], {
+    const s = startCheckScheduler([check], {
       timer: f.timer,
-      now: monotonic, // the clock that main.ts wires into the scheduler
-      run: async (c) => {
+      fetch: async () => {
         runs++;
         const before = Date.now();
         setSystemTime(new Date(before - 3_600_000));
         assert.ok(Date.now() < before);
-        return { ...mk(c), timestamp: Date.now() };
+        return new Response("ok");
       },
-      onResult: () => {},
+      sleep: async () => {},
+      location: "default",
+      signal: new AbortController().signal,
+      track: (work) => work,
+      onResult: async () => {},
+      onError: (_c, err) => {
+        throw err;
+      },
     });
     await flush();
     await f.advance(1000);

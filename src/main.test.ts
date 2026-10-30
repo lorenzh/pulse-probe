@@ -57,6 +57,7 @@ async function until(cond: () => boolean): Promise<void> {
 
 for (const [name, env] of [
   ["PULSE_PROBE_TOKEN", {}],
+  ["PULSE_API_URL", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_API_URL: "bogus" }],
   ["PULSE_LOCATION", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_LOCATION: "x".repeat(65) }],
   ["PULSE_CHECKS_RELOAD_MS", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_CHECKS_RELOAD_MS: "1" }],
   ["PULSE_LOG_LEVEL", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_LOG_LEVEL: "loud" }],
