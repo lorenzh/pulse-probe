@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lorenzh/pulse-probe/actions/workflows/ci.yml/badge.svg)](https://github.com/lorenzh/pulse-probe/actions/workflows/ci.yml)
 
-pulse is an uptime monitor with a status page. This repository is its probe: a worker that fetches the checks from [pulse-api](https://github.com/lorenzh/pulse-api), runs them over HTTP or as TLS certificate expiry checks (it skips `heartbeat` checks, which the API evaluates) and posts the results back. It uses the shared types of [pulse-contract](https://github.com/lorenzh/pulse-contract) and serves HTTP only on the optional health and metrics listener (`PULSE_HEALTH_PORT`).
+pulse is an uptime monitor with a status page. This repository is its probe: a worker that fetches the checks from [pulse-api](https://github.com/lorenzh/pulse-api), runs them over HTTP, as TLS certificate expiry checks, as TCP connect checks, as DNS record checks or as domain expiry checks over RDAP (it skips `heartbeat` checks, which the API evaluates) and posts the results back. It uses the shared types of [pulse-contract](https://github.com/lorenzh/pulse-contract) and serves HTTP only on the optional health and metrics listener (`PULSE_HEALTH_PORT`).
 
 pulse is built by Paragon Factory agents from the issues in [pulse-meta](https://github.com/lorenzh/pulse-meta).
 

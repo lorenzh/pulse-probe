@@ -105,6 +105,37 @@ A check with `type: "tls"` has `host`, `port` and `warnDays`, and optionally `ti
 - The chain and the hostname are not verified (`rejectUnauthorized: false`). Only the leaf's expiry is judged.
 - A TLS check with an empty `host` or a non-integer `port` or `warnDays` fails the contract validator. The probe skips it, logs `skipping invalid check ...: <error>` and runs the others.
 
+### TCP checks
+
+A check with `type: "tcp"` has `host`, `port` (1..65535) and `intervalMs`, and optionally `timeoutMs`, `retries` and `retryDelayMs`.
+
+- The probe opens a connection to `host:port` and closes it at once. It writes nothing.
+- `up` when the connection opens. The result has `statusCode` null.
+- `down` with `connection refused (ECONNREFUSED)`, `host not found (ENOTFOUND)`, another error code, or `timeout after <n>ms`.
+
+### DNS checks
+
+A check with `type: "dns"` has `dnsName`, `recordType` (`A`, `AAAA`, `CNAME`, `MX`, `TXT` or `NS`) and `intervalMs`, and optionally `expected` (1..20 strings), `resolver` (an IPv4 or IPv6 address, no port), `timeoutMs`, `retries` and `retryDelayMs`.
+
+- The probe sends one query (`tries: 1`) to `resolver`, or to the system resolver when it is absent.
+- Names (`CNAME`, `NS`, the `MX` exchange) are compared in lower case without the trailing dot. `MX` values read `<priority> <exchange>`. The chunks of one `TXT` record are joined. `AAAA` values are compared in compressed form.
+- With `expected`, the check is `up` when the answer holds every expected value (extra values are fine). Without it, any answer is `up`.
+- `down` reasons: `NXDOMAIN: <dnsName> does not exist`, `no <TYPE> record for <dnsName>`, `expected [..], got [..]`, `timeout after <n>ms`, or the error code.
+
+### Domain checks
+
+A check with `type: "domain"` has `domain` (lower case, at least two labels), `warnDays` (integer >= 0) and `intervalMs` (at least 3600000, one hour; no default), and optionally `timeoutMs`, `retries` and `retryDelayMs`.
+
+- The probe asks RDAP (not WHOIS). It reads the IANA bootstrap file `https://data.iana.org/rdap/dns.json` once per 24 hours, keeps only the TLD to first https service map, and uses the stale map when a refresh fails. The TLD is the last label, so `example.co.uk` looks up `uk`; a registry without RDAP gives `no RDAP service for .<tld>`.
+- It requests `<service>/domain/<domain>` (at most 3 redirects, body capped at 1 MiB) and reads the event with `eventAction` `expiration`.
+- The result carries `certDaysLeft`: floored whole days, negative when expired, null when unknown.
+- `up` when `certDaysLeft > warnDays`. `degraded` with `domain expires in N days` when `0 <= certDaysLeft <= warnDays`. `down` with `domain expired` when the expiry has passed. This differs from the TLS check, where `warnDays` gives `down`.
+- No expiration event or an unparsable date is `down` with `expiry date not found in RDAP answer`. An HTTP error is `down` with `RDAP <status>`.
+
+### Rollout of a new check type
+
+Every probe location must run a version that knows the type before the check is added to the API. An older probe logs `skipping invalid check <id>: ...` for the unknown type, runs the other checks, and the check stays `unknown` at that location.
+
 ### Heartbeat checks
 
 A check with `type: "heartbeat"` is never run by the probe. Jobs ping the API, and the API judges it.
@@ -115,12 +146,12 @@ A check with `type: "heartbeat"` is never run by the probe. Jobs ping the API, a
 
 ### Retries
 
-Only HTTP checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs` is an integer 0..60000 (default 1000).
+HTTP, TCP, DNS and domain checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs` is an integer 0..60000 (default 1000).
 
-- A failed attempt (non-2xx, timeout or network error) is repeated up to `retries` times, waiting `retryDelayMs` between attempts.
+- A failed attempt (non-2xx, timeout, refused connection, failed lookup or network error) is repeated up to `retries` times, waiting `retryDelayMs` between attempts.
 - The first success (`up` or `degraded`) stops the loop.
 - The result is that of the last attempt. Its `timestamp` is the start of the first attempt. `attempts` is the number of attempts made.
-- The probe stops retrying early when the next attempt would start at or after the end of the check's interval.
+- The probe stops retrying at shutdown, and early when the next attempt would start at or after the end of the check's interval.
 - TLS checks are not retried (`attempts` is 1).
 
 ### Schedule
