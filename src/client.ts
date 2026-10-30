@@ -6,6 +6,7 @@ import {
   type FetchJsonResult,
   fetchJson,
   type HeartbeatCheck,
+  headerValueSchema,
   type Result,
   validateCheck,
   WIRE_VERSION_HEADER,
@@ -82,12 +83,14 @@ function toCheck(c: ProbeCheck): ProbeCheck {
 
 /**
  * Resolves `{ env }` header values from `env`. Returns the header name and variable name
- * (never a value) of the first reference that is unset or empty.
+ * (never a value) of the first reference that is unset, empty or not a valid header value.
  */
 function resolveHeaders(
   headers: Record<string, string | { env: string }>,
   env: Record<string, string | undefined>,
-): { ok: true; value: Record<string, string> } | { ok: false; name: string; variable: string } {
+):
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; name: string; variable: string; problem: string } {
   const value: Record<string, string> = {};
   for (const [name, raw] of Object.entries(headers ?? {})) {
     if (typeof raw === "string") {
@@ -95,7 +98,13 @@ function resolveHeaders(
       continue;
     }
     const resolved = env[raw.env];
-    if (resolved === undefined || resolved === "") return { ok: false, name, variable: raw.env };
+    if (resolved === undefined || resolved === "") {
+      return { ok: false, name, variable: raw.env, problem: "is not set" };
+    }
+    // A CR, LF or TAB would make fetch throw an error that quotes the value.
+    if (!headerValueSchema.safeParse(resolved).success) {
+      return { ok: false, name, variable: raw.env, problem: "is not a valid header value" };
+    }
     value[name] = resolved;
   }
   return { ok: true, value };
@@ -137,7 +146,7 @@ function readableId(raw: unknown): string {
   return typeof id === "string" ? ` ${id}` : "";
 }
 
-/** Builds the probe check; `undefined` when a header env reference is unset (logged, names only). */
+/** Builds the probe check; `undefined` when a header env reference is unset or invalid (logged, names only). */
 function withResolvedHeaders(
   parsed: Exclude<Check, HeartbeatCheck>,
   env: Record<string, string | undefined>,
@@ -147,7 +156,9 @@ function withResolvedHeaders(
   if (parsed.type === "tls" || check.type === "tls" || parsed.headers === undefined) return check;
   const headers = resolveHeaders(parsed.headers, env);
   if (!headers.ok) {
-    log(`skipping check ${check.id}: header ${headers.name} env ${headers.variable} is not set`);
+    log(
+      `skipping check ${check.id}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
+    );
     return undefined;
   }
   check.headers = headers.value;

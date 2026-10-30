@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { after, test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
-import { runCheck } from "./check.ts";
+import { MAX_KEYWORD_BODY_BYTES, runCheck } from "./check.ts";
 import type { ProbeCheck } from "./client.ts";
+import { createMetrics } from "./metrics.ts";
 
 let t = 0;
 const now = (): number => (t += 7);
@@ -45,7 +48,7 @@ test("sends method, headers, body and the probe user agent", async () => {
   );
   assert.equal(r.status, "up");
   assert.equal(f.seen[0]?.method, "POST");
-  assert.equal(f.seen[0]?.body, '{"a":1}');
+  assert.deepEqual(f.seen[0]?.body, new TextEncoder().encode('{"a":1}'));
   assert.equal(f.seen[0]?.headers.Authorization, "Bearer sentinel-secret");
   assert.match(f.seen[0]?.headers["user-agent"] ?? "", /^pulse-probe/);
 });
@@ -84,14 +87,59 @@ test("a 404 is up when expectedStatus is 404", async () => {
   assert.equal(r.status, "up");
 });
 
+/** A real receiver on 127.0.0.1: `/redirect` answers 302 to `/missing` (404); others 200. */
+const received: IncomingHttpHeaders[] = [];
+const server: Server = createServer((req, res) => {
+  received.push(req.headers);
+  req.resume();
+  if (req.url === "/redirect") res.writeHead(302, { location: "/missing" }).end();
+  else if (req.url === "/missing") res.writeHead(404).end();
+  else res.writeHead(200).end();
+});
+const listening = new Promise<string>((resolve) => {
+  server.listen(0, "127.0.0.1", () => {
+    resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  });
+});
+after(() => server.close());
+
 test("a redirect is judged on the final status", async () => {
-  const impl = async (): Promise<Response> => {
-    const res = new Response("", { status: 200 });
-    Object.defineProperty(res, "redirected", { value: true });
-    return res;
-  };
-  const r = await run({ ...base, expectedStatus: [200] }, impl as typeof fetch);
+  const origin = await listening;
+  const url = `${origin}/redirect`;
+  const r = await run({ ...base, url, expectedStatus: [404] }, fetch);
   assert.equal(r.status, "up");
+  assert.equal(r.statusCode, 404);
+  const onRedirect = await run({ ...base, url, expectedStatus: [302] }, fetch);
+  assert.equal(onRedirect.reason, "HTTP 404 not in 302");
+});
+
+test("a body is sent without a default content type", async () => {
+  const url = `${await listening}/plain`;
+  received.length = 0;
+  await run({ ...base, url, method: "POST", body: '{"a":1}' }, fetch);
+  assert.equal(received[0]?.["content-type"], undefined);
+  received.length = 0;
+  const headers = { "Content-Type": "application/json" };
+  await run({ ...base, url, method: "POST", body: '{"a":1}', headers }, fetch);
+  assert.equal(received[0]?.["content-type"], "application/json");
+});
+
+test("a JSON body of exactly 1 MiB is not truncated", async () => {
+  const prefix = '{"status":"ok","pad":"';
+  const pad = "a".repeat(MAX_KEYWORD_BODY_BYTES - prefix.length - 2);
+  const body = `${prefix}${pad}"}`;
+  assert.equal(Buffer.byteLength(body), MAX_KEYWORD_BODY_BYTES);
+  const r = await run(
+    { ...base, jsonAssert: [{ pointer: "/status", equals: "ok" }] },
+    fake(200, body).fetch,
+  );
+  assert.equal(r.reason, null);
+  assert.equal(r.status, "up");
+  const over = await run(
+    { ...base, jsonAssert: [{ pointer: "/status", equals: "ok" }] },
+    fake(200, `${body} `).fetch,
+  );
+  assert.equal(over.reason, "json: invalid body");
 });
 
 const json = (check: Partial<ProbeCheck> & object, body: string, status = 200) =>
@@ -183,6 +231,8 @@ test("secrets never reach the result or the reason", async () => {
     },
     f.fetch,
   );
+  assert.equal(f.seen[0]?.headers.Authorization, secret);
+  assert.equal(r.reason, 'json /status: expected "ok", got "degraded"');
   const text = JSON.stringify(r);
   assert.ok(!text.includes(secret));
   assert.ok(!text.includes(bodySecret));
@@ -190,4 +240,29 @@ test("secrets never reach the result or the reason", async () => {
     throw Object.assign(new Error(`bad ${secret}`), { cause: { code: "ECONNRESET" } });
   }) as typeof fetch);
   assert.equal(failing.reason, "ECONNRESET");
+  const uncoded = await run({ ...base, headers: { Authorization: secret } }, (async () => {
+    throw new TypeError(`bad ${secret} ${bodySecret}`);
+  }) as typeof fetch);
+  assert.equal(uncoded.reason, "request error");
+});
+
+test("a header secret that fetch rejects never reaches results, reasons or metrics", async () => {
+  const url = `${await listening}/plain`;
+  const metrics = createMetrics();
+  const outputs: string[] = [];
+  for (const secret of [
+    "sentinel\r\nsecret",
+    "sentinel\nsecret",
+    "sentinel\rsecret",
+    "sentinel\0secret",
+  ]) {
+    const check = { ...base, url, headers: { Authorization: secret } };
+    metrics.setChecks([check]);
+    const r = await run(check, fetch);
+    metrics.recordResult(r);
+    assert.equal(r.status, "down");
+    assert.equal(r.reason, "request error");
+    outputs.push(JSON.stringify(r), metrics.render());
+  }
+  assert.ok(!outputs.join("\n").includes("sentinel"));
 });

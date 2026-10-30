@@ -109,3 +109,26 @@ test("the log of a skipped check holds no header value", async () => {
   assert.ok(!text.includes("sentinel-literal"));
   assert.ok(!text.includes('{"x":1}'));
 });
+
+test("loadChecks skips a check whose env value is not a valid header value, logging names only", async () => {
+  const logs: string[] = [];
+  const ok = { id: "ok", name: "OK", url: "https://x.test/", intervalMs: 1000 };
+  for (const value of ["sentinel\r\nx", "sentinel\nx", "sentinel\tx", "sentinel\rx"]) {
+    logs.length = 0;
+    const a = api({ "/probe/checks": () => Response.json([rich, ok], wire) });
+    const checks = await loadChecks("https://api", {
+      fetch: a.fetch,
+      log: (m) => logs.push(m),
+      token: "t",
+      env: { SVC_TOKEN: value },
+    });
+    assert.deepEqual(
+      checks.map((c) => c.id),
+      ["ok"],
+    );
+    assert.deepEqual(logs, [
+      "skipping check p: header Authorization env SVC_TOKEN is not a valid header value",
+    ]);
+    assert.ok(!JSON.stringify({ checks, logs }).includes("sentinel"));
+  }
+});

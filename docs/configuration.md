@@ -20,7 +20,7 @@ If the health listener cannot bind (port in use, no permission, unknown address)
 
 ## Checks reload
 
-- The probe reloads `GET /checks` every `PULSE_CHECKS_RELOAD_MS` and follows the result: it starts added checks, stops removed ones and restarts checks whose settings changed. Unchanged checks keep their schedule.
+- The probe reloads the checks the same way (`GET /probe/checks`, falling back to `GET /checks`) every `PULSE_CHECKS_RELOAD_MS` and follows the result: it starts added checks, stops removed ones and restarts checks whose settings changed. Unchanged checks keep their schedule.
 - A value below 5000, above 2147483647 (the largest timer delay) or one that is not an integer makes the probe exit at startup with `PULSE_CHECKS_RELOAD_MS must be an integer from 5000 to 2147483647`.
 - A failed reload keeps the running checks, is logged and is retried after 10 seconds (or the interval, if shorter).
 - When the API answers 404 for a result (the check is unknown or no longer active), the probe reloads at once, at most every 5 seconds.
@@ -47,14 +47,14 @@ See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/d
 
 ## Checks
 
-The probe has no check configuration of its own. It fetches the checks once at startup from `GET /checks` on the API and retries every 10000 ms until that succeeds, logging `fetching checks failed: <reason>; retrying in 10000ms` each time. The checks are defined in the API's checks file.
+The probe has no check configuration of its own. It fetches the checks once at startup from `GET /probe/checks` on the API (with the probe token; an API that answers 404 gets the public `GET /checks` instead) and retries every 10000 ms until that succeeds, logging `fetching checks failed: <reason>; retrying in 10000ms` each time. The checks are defined in the API's checks file.
 
 ### HTTP checks
 
 Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `latencyObjectiveMs`, `retries`, `retryDelayMs`, `keyword`, `method`, `headers`, `body`, `expectedStatus`, `jsonAssert`.
 
 - Each run is an HTTP request with `method` (default GET). Redirects are followed. The default timeout is 5000 ms.
-- A final status in `expectedStatus` (default `200-299`) is `up`. Anything else is `down` with reason `HTTP <code> not in <expectedStatus joined with ", ">`, for example `HTTP 503 not in 200-299`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
+- A final status in `expectedStatus` (default `200-299`) is `up`. Anything else is `down` with reason `HTTP <code> not in <expectedStatus joined with ", ">`, for example `HTTP 503 not in 200-299`, `timeout after <n>ms`, or the error code (for example `ECONNREFUSED`). An error without a code gives `request error`; the error message is never used, because it can quote a header value or the body.
 - If `latencyObjectiveMs` is set and the measured `latencyMs` is strictly above it, the result is `degraded` with reason `latency <n>ms over objective <m>ms`. Equal to the objective is still `up`. An objective at or above `timeoutMs` can never be reached, so the check is never degraded.
 
 ### Keyword
@@ -66,18 +66,18 @@ With `keyword` set, a 2xx answer is `up` only when its body contains the keyword
 - A missing keyword is `down` (never `degraded`) with the 2xx `statusCode` and reason `keyword "<text>" not found`. Retries apply as for any failed attempt.
 - A status outside `expectedStatus` keeps reason `HTTP <code> not in <list>`. A timeout or read error while reading the body keeps the timeout or error reason.
 - `latencyMs` includes the time to read the body, so a found keyword can still lead to `degraded`.
-- Without `keyword` the body is not read. TLS checks have no keyword.
+- Without `keyword` and `jsonAssert` the body is not read. TLS checks have no keyword.
 
 ### Request options
 
 - `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`.
-- `headers`: a value is a literal string or `{ "env": "NAME" }`. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). Set the variable in every probe location. The probe always sends its own `User-Agent`.
+- `headers`: a value is a literal string or `{ "env": "NAME" }`. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). A value that is not a valid header value (for example one with a CR, LF or TAB) skips the check with `... env NAME is not a valid header value`. Set the variable in every probe location. The probe always sends its own `User-Agent`.
 - `expectedStatus` accepts codes and `"lo-hi"` ranges. The final status after redirects is judged.
 - Header values, env values and bodies are never logged or put in results, reasons or `/metrics`.
 
 ### JSON assertions
 
-`jsonAssert` is a list of `{ "pointer", "equals" }` or `{ "pointer", "exists": true }` (RFC 6901 pointers; `""` is the whole document; `equals` is a deep, strictly typed comparison). It is checked on an accepted status, after `keyword`, on the same single body read (at most 1 MiB; a body at or over the limit counts as invalid). HEAD never reads a body. Reasons, first failure wins:
+`jsonAssert` is a list of `{ "pointer", "equals" }` or `{ "pointer", "exists": true }` (RFC 6901 pointers; `""` is the whole document; `equals` is a deep, strictly typed comparison). It is checked on an accepted status, after `keyword`, on the same single body read (at most 1 MiB; a body over the limit counts as invalid; a body of exactly 1 MiB is read in full). HEAD never reads a body. Reasons, first failure wins:
 
 - `keyword "<text>" not found`
 - `json: invalid body`

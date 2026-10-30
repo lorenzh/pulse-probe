@@ -395,7 +395,7 @@ test("keyword non-2xx keeps HTTP reason", async () => {
 });
 
 test("keyword beyond the 1 MiB limit is not found", async () => {
-  const f = bodyFetch(200, [new Uint8Array(1_048_576).fill(97), enc("needle")]);
+  const f = bodyFetch(200, [new Uint8Array(1_048_576).fill(97), enc("needle"), enc("rest")]);
   const r = await runCheck(kwCheck("needle"), { ...deps, fetch: f.fetch });
   assert.equal(r.status, "down");
   assert.equal(r.reason, 'keyword "needle" not found');

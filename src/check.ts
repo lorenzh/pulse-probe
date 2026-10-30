@@ -72,18 +72,20 @@ export interface CheckDeps {
   signal?: AbortSignal;
 }
 
-function errorReason(err: unknown): string {
-  if (err instanceof Error) {
-    const cause = (err as { cause?: unknown }).cause;
-    if (cause && typeof cause === "object") {
-      const code = (cause as { code?: unknown }).code;
-      if (typeof code === "string" && code !== "") return code;
-    }
-    const code = (err as { code?: unknown }).code;
+/** The error code of `err` or its cause, if any. */
+function errorCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause && typeof cause === "object") {
+    const code = (cause as { code?: unknown }).code;
     if (typeof code === "string" && code !== "") return code;
-    return err.message;
   }
-  return String(err);
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" && code !== "" ? code : undefined;
+}
+
+function errorReason(err: unknown): string {
+  return errorCode(err) ?? (err instanceof Error ? err.message : String(err));
 }
 
 export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
@@ -152,17 +154,14 @@ async function readBody(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (bytes + value.length > MAX_KEYWORD_BODY_BYTES) isTruncated = true;
       const room = MAX_KEYWORD_BODY_BYTES - bytes;
       bytes += Math.min(value.length, room);
       // Rescan only the tail that can hold a match straddling the previous chunk.
       const from = Math.max(0, text.length - (stopAfter?.length ?? 0) + 1);
       text += decoder.decode(value.subarray(0, room), { stream: true });
       if (stopAfter !== undefined && text.indexOf(stopAfter, from) !== -1) break;
-      if (bytes >= MAX_KEYWORD_BODY_BYTES) {
-        // A body of exactly the limit counts as truncated: reading on would cost one more chunk.
-        isTruncated = true;
-        break;
-      }
+      if (isTruncated) break;
     }
   } finally {
     // Best-effort cancel of the rest of the body; failure to cancel is irrelevant.
@@ -274,7 +273,8 @@ async function attemptHttp(
       method,
       // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
       headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
-      ...(check.body !== undefined ? { body: check.body } : {}),
+      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
+      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
       signal:
         deps.signal === undefined
           ? AbortSignal.timeout(timeoutMs)
@@ -294,7 +294,8 @@ async function attemptHttp(
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       return done("down", null, `timeout after ${timeoutMs}ms`);
     }
-    return done("down", null, errorReason(err));
+    // A fetch error message can quote a header value or the body, so only the code is used.
+    return done("down", null, errorCode(err) ?? "request error");
   }
 }
 
