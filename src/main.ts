@@ -108,7 +108,14 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
   try {
     checks = await fetchChecks(
       settings.apiUrl,
-      { fetch, sleep: abortableSleep, log, signal: shutdown.signal },
+      {
+        fetch,
+        sleep: abortableSleep,
+        log,
+        signal: shutdown.signal,
+        token: settings.token,
+        env: process.env,
+      },
       RETRY_MS,
     );
   } catch (err) {
@@ -127,7 +134,14 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
   const reloader = startReloader({
     timer,
     now: monotonic,
-    load: () => loadChecks(settings.apiUrl, { fetch, log, signal: shutdown.signal }),
+    load: () =>
+      loadChecks(settings.apiUrl, {
+        fetch,
+        log,
+        signal: shutdown.signal,
+        token: settings.token,
+        env: process.env,
+      }),
     apply: (next) => {
       metrics.setChecks(next);
       scheduler.sync(next);

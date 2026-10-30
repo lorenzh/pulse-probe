@@ -24,7 +24,7 @@ If the health listener cannot bind (port in use, no permission, unknown address)
 - A value below 5000, above 2147483647 (the largest timer delay) or one that is not an integer makes the probe exit at startup with `PULSE_CHECKS_RELOAD_MS must be an integer from 5000 to 2147483647`.
 - A failed reload keeps the running checks, is logged and is retried after 10 seconds (or the interval, if shorter).
 - When the API answers 404 for a result (the check is unknown or no longer active), the probe reloads at once, at most every 5 seconds.
-- `GET /checks` goes through the shared `fetchJson` client of pulse-contract. A request times out after 10 seconds (headers and body). A body above 5 MiB fails the fetch and is retried. The HTTP status is checked before the version header. Each check is validated with the validators of pulse-contract. An invalid check is skipped and logged with the contract's error, for example `checks[3].intervalMs: must be an integer 1..2147483647`. The probe also reads the `x-pulse-contract` header of the response: a missing header is logged once, a different version counts as a failed fetch and is retried. A version mismatch on the `POST /results` response is logged only.
+- The probe fetches `GET /probe/checks` with the Bearer token, which serves headers and bodies. When the API answers 404 (an older API), the probe falls back to the public `GET /checks`. Any other failure is retried. `GET /checks` goes through the shared `fetchJson` client of pulse-contract. A request times out after 10 seconds (headers and body). A body above 5 MiB fails the fetch and is retried. The HTTP status is checked before the version header. Each check is validated with the validators of pulse-contract. An invalid check is skipped and logged with the contract's error, for example `checks[3].intervalMs: must be an integer 1..2147483647`. The probe also reads the `x-pulse-contract` header of the response: a missing header is logged once, a different version counts as a failed fetch and is retried. A version mismatch on the `POST /results` response is logged only.
 
 ## Location
 
@@ -39,7 +39,7 @@ How the API combines locations is described in [quorum and incidents](https://gi
 
 See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#locations-and-tokens).
 
-- The probe sends the token as `Authorization: Bearer <token>` on `POST /results`. It does not send it on `GET /checks`.
+- The probe sends the token as `Authorization: Bearer <token>` on `POST /results`. It also sends it on `GET /probe/checks` (see below). It does not send it on the public `GET /checks`.
 - The value is trimmed. Missing or blank makes the probe exit at startup with `PULSE_PROBE_TOKEN is missing or empty`. The message never contains the value.
 - Create a token with `openssl rand -hex 32`. The API owner enters it, with the probe's location, in the API's tokens file.
 - `PULSE_LOCATION` must equal the location of the token. Otherwise the API answers 403 for every result.
@@ -51,10 +51,10 @@ The probe has no check configuration of its own. It fetches the checks once at s
 
 ### HTTP checks
 
-Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `latencyObjectiveMs`, `retries`, `retryDelayMs`, `keyword`.
+Fields used: `id`, `name`, `url`, `intervalMs`, and optionally `timeoutMs`, `latencyObjectiveMs`, `retries`, `retryDelayMs`, `keyword`, `method`, `headers`, `body`, `expectedStatus`, `jsonAssert`.
 
-- Each run is an HTTP GET. Redirects are followed. The default timeout is 5000 ms.
-- A 2xx response is `up`. Anything else is `down` with reason `HTTP <code>`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
+- Each run is an HTTP request with `method` (default GET). Redirects are followed. The default timeout is 5000 ms.
+- A final status in `expectedStatus` (default `200-299`) is `up`. Anything else is `down` with reason `HTTP <code> not in <expectedStatus joined with ", ">`, for example `HTTP 503 not in 200-299`, `timeout after <n>ms`, or the error code or message (for example `ECONNREFUSED`).
 - If `latencyObjectiveMs` is set and the measured `latencyMs` is strictly above it, the result is `degraded` with reason `latency <n>ms over objective <m>ms`. Equal to the objective is still `up`. An objective at or above `timeoutMs` can never be reached, so the check is never degraded.
 
 ### Keyword
@@ -64,11 +64,32 @@ With `keyword` set, a 2xx answer is `up` only when its body contains the keyword
 - The match is a plain, case-sensitive substring on the body of the final response (after redirects). The body is decoded as UTF-8. There is no content-type filter.
 - The probe reads at most 1 MiB (1,048,576 bytes) of the body and stops as soon as the keyword is found. A keyword that is not found within that limit, including one that straddles it, counts as not found.
 - A missing keyword is `down` (never `degraded`) with the 2xx `statusCode` and reason `keyword "<text>" not found`. Retries apply as for any failed attempt.
-- A non-2xx answer keeps reason `HTTP <code>`. A timeout or read error while reading the body keeps the timeout or error reason.
+- A status outside `expectedStatus` keeps reason `HTTP <code> not in <list>`. A timeout or read error while reading the body keeps the timeout or error reason.
 - `latencyMs` includes the time to read the body, so a found keyword can still lead to `degraded`.
 - Without `keyword` the body is not read. TLS checks have no keyword.
 
+### Request options
+
+- `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`.
+- `headers`: a value is a literal string or `{ "env": "NAME" }`. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). Set the variable in every probe location. The probe always sends its own `User-Agent`.
+- `expectedStatus` accepts codes and `"lo-hi"` ranges. The final status after redirects is judged.
+- Header values, env values and bodies are never logged or put in results, reasons or `/metrics`.
+
+### JSON assertions
+
+`jsonAssert` is a list of `{ "pointer", "equals" }` or `{ "pointer", "exists": true }` (RFC 6901 pointers; `""` is the whole document; `equals` is a deep, strictly typed comparison). It is checked on an accepted status, after `keyword`, on the same single body read (at most 1 MiB; a body at or over the limit counts as invalid). HEAD never reads a body. Reasons, first failure wins:
+
+- `keyword "<text>" not found`
+- `json: invalid body`
+- `json <pointer>: expected <JSON>, got <JSON>` (`got` is `missing` when absent)
+- `json <pointer>: missing` for `exists`
+
+Quoted response values are cut to 80 characters with `…`.
+
 Example: `{ "id": "home", "name": "Home", "url": "https://example.com", "intervalMs": 60000, "keyword": "Welcome" }`
+
+Example: `{ "id": "svc", "name": "Svc", "url": "https://svc.example/v1", "intervalMs": 60000, "method": "POST", "headers": { "Authorization": { "env": "SVC_TOKEN" } }, "body": "{}", "expectedStatus": [200], "jsonAssert": [{ "pointer": "/status", "equals": "ok" }] }`
+
 
 ### TLS checks
 
