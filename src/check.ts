@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import tls from "node:tls";
-import type { Result, TlsCheck } from "@lorenzh/pulse-contract";
+import type { ExpectedStatus, JsonAssertion, Result, TlsCheck } from "@lorenzh/pulse-contract";
 import type { ProbeCheck } from "./client.ts";
 
 import { userAgent } from "./location.ts";
@@ -72,18 +72,20 @@ export interface CheckDeps {
   signal?: AbortSignal;
 }
 
-function errorReason(err: unknown): string {
-  if (err instanceof Error) {
-    const cause = (err as { cause?: unknown }).cause;
-    if (cause && typeof cause === "object") {
-      const code = (cause as { code?: unknown }).code;
-      if (typeof code === "string" && code !== "") return code;
-    }
-    const code = (err as { code?: unknown }).code;
+/** The error code of `err` or its cause, if any. */
+function errorCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause && typeof cause === "object") {
+    const code = (cause as { code?: unknown }).code;
     if (typeof code === "string" && code !== "") return code;
-    return err.message;
   }
-  return String(err);
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" && code !== "" ? code : undefined;
+}
+
+function errorReason(err: unknown): string {
+  return errorCode(err) ?? (err instanceof Error ? err.message : String(err));
 }
 
 export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
@@ -113,91 +115,197 @@ export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Resu
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? startMono : deps.monotonic();
-    const result = await attemptHttp(
-      check.url,
-      check.keyword,
-      deps,
-      timeoutMs,
-      (status, code, reason) => {
-        const r = finish(status, code, reason, undefined, attempt, attemptStart);
-        const objective = check.latencyObjectiveMs;
-        if (status === "up" && objective !== undefined && r.latencyMs > objective) {
-          return {
-            ...r,
-            status: "degraded",
-            reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
-          };
-        }
-        return r;
-      },
-    );
+    const result = await attemptHttp(check, deps, timeoutMs, (status, code, reason) => {
+      const r = finish(status, code, reason, undefined, attempt, attemptStart);
+      const objective = check.latencyObjectiveMs;
+      if (status === "up" && objective !== undefined && r.latencyMs > objective) {
+        return {
+          ...r,
+          status: "degraded",
+          reason: `latency ${r.latencyMs}ms over objective ${objective}ms`,
+        };
+      }
+      return r;
+    });
     if (result.status !== "down" || attempt > retries) return result;
     if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
 }
 
-/** Reads the body up to the byte limit and reports whether it contains `keyword`. */
-async function bodyHasKeyword(
+/** The body text up to the byte limit, and whether the response had more. */
+interface BodyRead {
+  text: string;
+  isTruncated: boolean;
+}
+
+/** Reads the body once, up to the byte limit. */
+async function readBody(
   body: ReadableStream<Uint8Array> | null,
-  keyword: string,
-): Promise<boolean> {
-  if (body === null) return false;
+  stopAfter?: string,
+): Promise<BodyRead> {
+  if (body === null) return { text: "", isTruncated: false };
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let text = "";
   let bytes = 0;
+  let isTruncated = false;
   try {
-    while (bytes < MAX_KEYWORD_BODY_BYTES) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = value.subarray(0, MAX_KEYWORD_BODY_BYTES - bytes);
-      bytes += chunk.length;
+      if (bytes + value.length > MAX_KEYWORD_BODY_BYTES) isTruncated = true;
+      const room = MAX_KEYWORD_BODY_BYTES - bytes;
+      bytes += Math.min(value.length, room);
       // Rescan only the tail that can hold a match straddling the previous chunk.
-      const from = Math.max(0, text.length - keyword.length + 1);
-      text += decoder.decode(chunk, { stream: true });
-      if (text.indexOf(keyword, from) !== -1) return true;
+      const from = Math.max(0, text.length - (stopAfter?.length ?? 0) + 1);
+      text += decoder.decode(value.subarray(0, room), { stream: true });
+      if (stopAfter !== undefined && text.indexOf(stopAfter, from) !== -1) break;
+      if (isTruncated) break;
     }
-    return false;
   } finally {
     // Best-effort cancel of the rest of the body; failure to cancel is irrelevant.
     await reader.cancel().catch(() => {});
   }
+  return { text: text + decoder.decode(), isTruncated };
 }
 
+const MAX_QUOTE_CHARS = 80;
+
+/** Response data quoted in a reason: at most 80 characters. */
+function quote(text: string): string {
+  return text.length > MAX_QUOTE_CHARS ? `${text.slice(0, MAX_QUOTE_CHARS)}…` : text;
+}
+
+const DEFAULT_EXPECTED_STATUS: ExpectedStatus[] = ["200-299"];
+
+function matchesStatus(code: number, expected: ExpectedStatus[]): boolean {
+  return expected.some((entry) => {
+    if (typeof entry === "number") return entry === code;
+    const [lo, hi] = entry.split("-").map(Number);
+    return lo !== undefined && hi !== undefined && code >= lo && code <= hi;
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Resolves an RFC 6901 pointer; `undefined` means the pointer does not resolve. */
+function evaluatePointer(doc: unknown, pointer: string): { found: boolean; value?: unknown } {
+  let current: unknown = doc;
+  if (pointer === "") return { found: true, value: current };
+  for (const raw of pointer.slice(1).split("/")) {
+    const token = raw.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(current) && /^(0|[1-9]\d*)$/.test(token) && Number(token) < current.length) {
+      current = current[Number(token)];
+    } else if (isRecord(current) && Object.hasOwn(current, token)) {
+      current = current[token];
+    } else {
+      return { found: false };
+    }
+  }
+  return { found: true, value: current };
+}
+
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a)) {
+    return (
+      Array.isArray(b) && a.length === b.length && a.every((item, i) => isDeepEqual(item, b[i]))
+    );
+  }
+  if (isRecord(a)) {
+    if (!isRecord(b)) return false;
+    const keys = Object.keys(a);
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => Object.hasOwn(b, key) && isDeepEqual(a[key], b[key]))
+    );
+  }
+  return a === b;
+}
+
+/** The reason of the first failing assertion, or `null` when all hold. */
+function jsonFailure(text: string, isTruncated: boolean, asserts: JsonAssertion[]): string | null {
+  let doc: unknown;
+  try {
+    if (isTruncated) throw new Error("body over the limit");
+    doc = JSON.parse(text);
+  } catch {
+    // The parse error text can quote the response body; the reason names the problem only.
+    return "json: invalid body";
+  }
+  for (const assertion of asserts) {
+    const found = evaluatePointer(doc, assertion.pointer);
+    if (!Object.hasOwn(assertion, "equals")) {
+      if (!found.found) return `json ${assertion.pointer}: missing`;
+    } else if (!found.found || !isDeepEqual(found.value, assertion.equals)) {
+      const got = found.found ? quote(JSON.stringify(found.value)) : "missing";
+      return `json ${assertion.pointer}: expected ${quote(JSON.stringify(assertion.equals))}, got ${got}`;
+    }
+  }
+  return null;
+}
+
+/** The reason the accepted response fails `keyword` or `jsonAssert`, or `null`. */
+async function bodyFailure(check: HttpLikeCheck, res: Response): Promise<string | null> {
+  const { keyword, jsonAssert } = check;
+  if (keyword === undefined && jsonAssert === undefined) return null;
+  const { text, isTruncated } = await readBody(
+    res.body,
+    jsonAssert === undefined ? keyword : undefined,
+  );
+  if (keyword !== undefined && !text.includes(keyword)) return `keyword "${keyword}" not found`;
+  return jsonAssert === undefined ? null : jsonFailure(text, isTruncated, jsonAssert);
+}
+
+type HttpLikeCheck = Exclude<ProbeCheck, TlsCheck>;
+
 async function attemptHttp(
-  url: string,
-  keyword: string | undefined,
+  check: HttpLikeCheck,
   deps: CheckDeps,
   timeoutMs: number,
   done: (status: Result["status"], statusCode: number | null, reason: string | null) => Result,
 ): Promise<Result> {
   try {
-    const res = await deps.fetch(url, {
-      method: "GET",
-      headers: { "user-agent": userAgent(deps.location) },
+    const method = check.method ?? "GET";
+    const res = await deps.fetch(check.url, {
+      method,
+      // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
+      headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
+      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
+      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
       signal:
         deps.signal === undefined
           ? AbortSignal.timeout(timeoutMs)
           : AbortSignal.any([AbortSignal.timeout(timeoutMs), deps.signal]),
     });
-    const isOk = res.status >= 200 && res.status < 300;
-    if (isOk && keyword !== undefined) {
-      if (await bodyHasKeyword(res.body, keyword)) return done("up", res.status, null);
-      return done("down", res.status, `keyword "${keyword}" not found`);
+    const expected = check.expectedStatus ?? DEFAULT_EXPECTED_STATUS;
+    if (!matchesStatus(res.status, expected)) {
+      // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
+      await res.body?.cancel().catch(() => {});
+      return done("down", res.status, `HTTP ${res.status} not in ${expected.join(", ")}`);
     }
-    // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
+    const failure = method === "HEAD" ? null : await bodyFailure(check, res);
+    if (failure !== null) return done("down", res.status, failure);
     await res.body?.cancel().catch(() => {});
-    if (isOk) {
-      return done("up", res.status, null);
-    }
-    return done("down", res.status, `HTTP ${res.status}`);
+    return done("up", res.status, null);
   } catch (err) {
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       return done("down", null, `timeout after ${timeoutMs}ms`);
     }
-    return done("down", null, errorReason(err));
+    // A fetch error message can quote a header value or the body, so only the code is used.
+    return done("down", null, errorCode(err) ?? "request error");
   }
+}
+
+/** Header values as strings; an unresolved `{ env }` reference is dropped (the client skips such checks). */
+function resolvedHeaders(check: HttpLikeCheck): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(check.headers ?? {})) {
+    if (typeof value === "string") out[name] = value;
+  }
+  return out;
 }
 
 async function runTlsCheck(

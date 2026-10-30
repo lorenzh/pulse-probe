@@ -118,7 +118,7 @@ test("healthz, metrics, debug logs and clean shutdown against a fake API", async
   const target = await fakeApi((_q, res) => res.end("ok"));
   const posted: string[] = [];
   const api = await fakeApi((req, res) => {
-    if (req.url === "/checks") {
+    if (req.url === "/probe/checks" && req.headers.authorization === "Bearer tok-secret") {
       res.setHeader("content-type", "application/json");
       res.end(
         JSON.stringify([

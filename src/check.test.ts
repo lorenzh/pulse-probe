@@ -47,7 +47,7 @@ test("down on 500 with reason", async () => {
     const r = await runCheck({ id: "a", name: "A", url, intervalMs: 1000 }, deps);
     assert.equal(r.status, "down");
     assert.equal(r.statusCode, 500);
-    assert.equal(r.reason, "HTTP 500");
+    assert.equal(r.reason, "HTTP 500 not in 200-299");
   } finally {
     await close(server);
   }
@@ -177,7 +177,7 @@ test("retries: always failing reports the last attempt and waits retryDelayMs", 
     );
     assert.equal(r.status, "down");
     assert.equal(r.statusCode, 503);
-    assert.equal(r.reason, "HTTP 503");
+    assert.equal(r.reason, "HTTP 503 not in 200-299");
     assert.equal(r.attempts, 2);
     assert.equal(hits, 2);
     assert.deepEqual(sleeps, [250]);
@@ -293,7 +293,7 @@ test("never degraded without an objective", async () => {
 test("slow 503 stays down", async () => {
   const r = await objectiveRun(850, 500, 503);
   assert.equal(r.status, "down");
-  assert.equal(r.reason, "HTTP 503");
+  assert.equal(r.reason, "HTTP 503 not in 200-299");
 });
 
 test("degraded result is not retried", async () => {
@@ -391,11 +391,11 @@ test("keyword non-2xx keeps HTTP reason", async () => {
   const f = bodyFetch(503, [enc("hello")]);
   const r = await runCheck(kwCheck("hello"), { ...deps, fetch: f.fetch });
   assert.equal(r.status, "down");
-  assert.equal(r.reason, "HTTP 503");
+  assert.equal(r.reason, "HTTP 503 not in 200-299");
 });
 
 test("keyword beyond the 1 MiB limit is not found", async () => {
-  const f = bodyFetch(200, [new Uint8Array(1_048_576).fill(97), enc("needle")]);
+  const f = bodyFetch(200, [new Uint8Array(1_048_576).fill(97), enc("needle"), enc("rest")]);
   const r = await runCheck(kwCheck("needle"), { ...deps, fetch: f.fetch });
   assert.equal(r.status, "down");
   assert.equal(r.reason, 'keyword "needle" not found');

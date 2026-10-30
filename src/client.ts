@@ -3,14 +3,20 @@ import {
   checkWireVersion,
   type FetchJsonError,
   type FetchJsonOptions,
+  type FetchJsonResult,
   fetchJson,
   type HeartbeatCheck,
+  headerValueSchema,
   type Result,
   validateCheck,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
 
 export interface ClientDeps {
+  /** Probe token for `GET /probe/checks`. Without it only the public `GET /checks` is used. */
+  token?: string;
+  /** Environment that `{ env }` header values resolve from. Defaults to an empty map. */
+  env?: Record<string, string | undefined>;
   fetch: typeof fetch;
   sleep: (ms: number) => Promise<void>;
   log: (message: string) => void;
@@ -68,7 +74,40 @@ function toCheck(c: ProbeCheck): ProbeCheck {
   if (c.retries !== undefined) check.retries = c.retries;
   if (c.retryDelayMs !== undefined) check.retryDelayMs = c.retryDelayMs;
   if (c.keyword !== undefined) check.keyword = c.keyword;
+  if (c.method !== undefined) check.method = c.method;
+  if (c.body !== undefined) check.body = c.body;
+  if (c.expectedStatus !== undefined) check.expectedStatus = c.expectedStatus;
+  if (c.jsonAssert !== undefined) check.jsonAssert = c.jsonAssert;
   return check;
+}
+
+/**
+ * Resolves `{ env }` header values from `env`. Returns the header name and variable name
+ * (never a value) of the first reference that is unset, empty or not a valid header value.
+ */
+function resolveHeaders(
+  headers: Record<string, string | { env: string }>,
+  env: Record<string, string | undefined>,
+):
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; name: string; variable: string; problem: string } {
+  const value: Record<string, string> = {};
+  for (const [name, raw] of Object.entries(headers ?? {})) {
+    if (typeof raw === "string") {
+      value[name] = raw;
+      continue;
+    }
+    const resolved = env[raw.env];
+    if (resolved === undefined || resolved === "") {
+      return { ok: false, name, variable: raw.env, problem: "is not set" };
+    }
+    // A CR, LF or TAB would make fetch throw an error that quotes the value.
+    if (!headerValueSchema.safeParse(resolved).success) {
+      return { ok: false, name, variable: raw.env, problem: "is not a valid header value" };
+    }
+    value[name] = resolved;
+  }
+  return { ok: true, value };
 }
 
 // Loggers that already reported a missing version header: the reload loop must not repeat it.
@@ -107,13 +146,49 @@ function readableId(raw: unknown): string {
   return typeof id === "string" ? ` ${id}` : "";
 }
 
+/** Builds the probe check; `undefined` when a header env reference is unset or invalid (logged, names only). */
+function withResolvedHeaders(
+  parsed: Exclude<Check, HeartbeatCheck>,
+  env: Record<string, string | undefined>,
+  log: (message: string) => void,
+): ProbeCheck | undefined {
+  const check = toCheck(parsed);
+  if (parsed.type === "tls" || check.type === "tls" || parsed.headers === undefined) return check;
+  const headers = resolveHeaders(parsed.headers, env);
+  if (!headers.ok) {
+    log(
+      `skipping check ${check.id}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
+    );
+    return undefined;
+  }
+  check.headers = headers.value;
+  return check;
+}
+
+/** Asks `GET /probe/checks` when there is a token; an api that answers 404 gets the public `GET /checks`. */
+async function requestChecks(
+  baseUrl: string,
+  token: string | undefined,
+  options: FetchJsonOptions<unknown[]>,
+): Promise<FetchJsonResult<unknown[]>> {
+  if (token === undefined) return fetchJson(join(baseUrl, "/checks"), options);
+  const res = await fetchJson(join(baseUrl, "/probe/checks"), {
+    ...options,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.error.kind === "http" && res.error.status === 404) {
+    return fetchJson(join(baseUrl, "/checks"), options);
+  }
+  return res;
+}
+
 /**
  * Fetches the checks once. The timeout covers the headers and the body.
  * Invalid checks are skipped and logged. Heartbeat checks are dropped silently. Throws when the request fails.
  */
 export async function loadChecks(
   baseUrl: string,
-  deps: Pick<ClientDeps, "fetch" | "log" | "schedule" | "signal">,
+  deps: Pick<ClientDeps, "fetch" | "log" | "schedule" | "signal" | "token" | "env">,
 ): Promise<ProbeCheck[]> {
   // The client reports the absent header before it checks the status; the probe logs it for 2xx only.
   let isWireAbsent = false;
@@ -128,7 +203,7 @@ export async function loadChecks(
   };
   if (deps.signal !== undefined) options.signal = deps.signal;
   if (deps.schedule !== undefined) options.schedule = deps.schedule;
-  const res = await fetchJson(join(baseUrl, "/checks"), options);
+  const res = await requestChecks(baseUrl, deps.token, options);
   // Warn before a body or validation error propagates; a non-2xx answer stays quiet.
   const isFailedStatus = !res.ok && res.error.kind === "http";
   if (isWireAbsent && !isFailedStatus && !warnedAbsent.has(deps.log)) {
@@ -141,7 +216,10 @@ export async function loadChecks(
     const parsed = validateCheck(raw, `checks[${i}]`);
     // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
     if (!parsed.ok) deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
-    else if (parsed.value.type !== "heartbeat") checks.push(toCheck(parsed.value));
+    else if (parsed.value.type !== "heartbeat") {
+      const check = withResolvedHeaders(parsed.value, deps.env ?? {}, deps.log);
+      if (check !== undefined) checks.push(check);
+    }
   }
   return checks;
 }
