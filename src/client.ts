@@ -129,11 +129,13 @@ export async function loadChecks(
   if (deps.signal !== undefined) options.signal = deps.signal;
   if (deps.schedule !== undefined) options.schedule = deps.schedule;
   const res = await fetchJson(join(baseUrl, "/checks"), options);
-  if (!res.ok) throw toError(res.error);
-  if (isWireAbsent && !warnedAbsent.has(deps.log)) {
+  // Warn before a body or validation error propagates; a non-2xx answer stays quiet.
+  const isFailedStatus = !res.ok && res.error.kind === "http";
+  if (isWireAbsent && !isFailedStatus && !warnedAbsent.has(deps.log)) {
     warnedAbsent.add(deps.log);
     deps.log(`API sent no ${WIRE_VERSION_HEADER} header; cannot check the contract version`);
   }
+  if (!res.ok) throw toError(res.error);
   const checks: ProbeCheck[] = [];
   for (const [i, raw] of res.value.entries()) {
     const parsed = validateCheck(raw, `checks[${i}]`);

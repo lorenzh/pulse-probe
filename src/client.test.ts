@@ -497,6 +497,21 @@ test("loadChecks logs an absent version header once per logger and continues", a
   assert.match(logs[0] ?? "", /x-pulse-contract/);
 });
 
+test("loadChecks logs an absent version header on a 2xx with an invalid body", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () => Response.json({ not: "an array" })) as unknown as typeof fetch;
+  await assert.rejects(loadChecks("https://api", { fetch: fakeFetch, log: (m) => logs.push(m) }));
+  assert.equal(logs.length, 1);
+  assert.match(logs[0] ?? "", /x-pulse-contract/);
+});
+
+test("loadChecks stays quiet about an absent version header on a non-2xx", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+  await assert.rejects(loadChecks("https://api", { fetch: fakeFetch, log: (m) => logs.push(m) }));
+  assert.deepEqual(logs, []);
+});
+
 test("fetchChecks treats a contract version mismatch as a failed fetch and retries", async () => {
   let calls = 0;
   const fakeFetch = (async () => {
