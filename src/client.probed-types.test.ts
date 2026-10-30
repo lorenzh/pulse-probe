@@ -51,3 +51,23 @@ test("loadChecks skips an invalid new-type check and keeps the valid ones", asyn
   assert.deepEqual(checks, [tcp, dns]);
   assert.equal(logs.filter((m) => m.startsWith("skipping invalid check")).length, 2);
 });
+
+test("loadChecks keeps checks of every probed type that carry an availabilityTarget", async () => {
+  const http = { id: "h", name: "H", url: "https://a.test", intervalMs: 1000 };
+  const tls = {
+    id: "s",
+    name: "S",
+    type: "tls",
+    host: "a.test",
+    port: 443,
+    warnDays: 14,
+    intervalMs: 1000,
+  };
+  const all = [http, tls, tcp, dns, domain];
+  const logs: string[] = [];
+  const body = all.map((c) => ({ ...c, availabilityTarget: 99.9 }));
+  const fakeFetch = (async () => Response.json(body, wire)) as unknown as typeof fetch;
+  const checks = await loadChecks("https://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
+  assert.deepEqual(logs, []);
+  assert.deepEqual(checks, all);
+});
