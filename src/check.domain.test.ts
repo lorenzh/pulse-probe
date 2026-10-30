@@ -231,7 +231,7 @@ interface StubBootstrap {
 }
 
 // An injected fetch: the first bootstrap request answers; `later` decides what the others do.
-function stubBootstrap(later: "429" | "stall"): StubBootstrap {
+function stubBootstrap(later: "429" | "stall", firstDelayMs = 0): StubBootstrap {
   const url = `https://bootstrap.stub/dns.json?n=${seq++}`;
   const requests: AbortSignal[] = [];
   const fetchFn: CheckDeps["fetch"] = async (input, init) => {
@@ -239,6 +239,15 @@ function stubBootstrap(later: "429" | "stall"): StubBootstrap {
     const signal = init?.signal as AbortSignal;
     requests.push(signal);
     if (requests.length === 1) {
+      if (firstDelayMs > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, firstDelayMs);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          });
+        });
+      }
       return new Response(JSON.stringify({ services: [[["test"], ["https://rdap.stub/"]]] }));
     }
     if (later === "429") return new Response(null, { status: 429 });
@@ -313,4 +322,16 @@ test("shutdown aborts a background bootstrap refresh", async () => {
   assert.equal(stub.requests[2]?.aborted, false);
   next.abort();
   await bootstrapSettled(stub.url);
+});
+
+test("a check waiting on the shared bootstrap fetch keeps its own timeout", async () => {
+  const stub = stubBootstrap("429", 1500);
+  const deps = stub.deps();
+  const [short, long] = await Promise.all([
+    runCheck(domain({ timeoutMs: 1000, retries: 0 }), deps),
+    runCheck(domain({ timeoutMs: 5000, retries: 0 }), deps),
+  ]);
+  assert.deepEqual([short.status, short.reason], ["down", "timeout after 1000ms"]);
+  assert.deepEqual([long.status, long.reason], ["up", null]);
+  assert.equal(stub.requests.length, 1);
 });

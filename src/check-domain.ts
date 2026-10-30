@@ -7,6 +7,8 @@ const BOOTSTRAP_TTL_MS = DAY_MS;
 const MAX_RDAP_BYTES = 1_048_576;
 const MAX_BOOTSTRAP_BYTES = 2_097_152;
 const MAX_REDIRECTS = 3;
+/** Lifetime of a shared bootstrap fetch, independent of the checks waiting on it. */
+const BOOTSTRAP_TIMEOUT_MS = 30_000;
 
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -98,19 +100,25 @@ async function fetchBootstrap(
   return services;
 }
 
-// shortcut: the shared fetch runs under the first caller's signal, so a waiter with a longer
-// timeout can fail early on the first load; split the signals if check timeouts diverge widely.
-function refreshBootstrap(
-  url: string,
-  deps: DomainDeps,
-  signal: AbortSignal,
-): Promise<Map<string, string>> {
+// Single flight: the fetch has its own lifetime (cap and shutdown), not that of the first caller.
+function refreshBootstrap(url: string, deps: DomainDeps): Promise<Map<string, string>> {
   let pending = bootstrapInFlight.get(url);
   if (pending === undefined) {
+    const signal = attemptSignal(BOOTSTRAP_TIMEOUT_MS, deps.signal);
     pending = fetchBootstrap(url, deps, signal).finally(() => bootstrapInFlight.delete(url));
     bootstrapInFlight.set(url, pending);
   }
   return pending;
+}
+
+/** `promise`, or the abort reason of `signal` if that comes first; the promise keeps running. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 /** Test hook: settles once the bootstrap fetch in flight for `url`, if any, has ended. */
@@ -118,18 +126,14 @@ export async function bootstrapSettled(url: string): Promise<void> {
   await bootstrapInFlight.get(url)?.catch(() => {});
 }
 
-async function loadBootstrap(
-  deps: DomainDeps,
-  signal: AbortSignal,
-  timeoutMs: number,
-): Promise<Map<string, string>> {
+async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Map<string, string>> {
   const url = deps.bootstrapUrl ?? RDAP_BOOTSTRAP_URL;
   const cached = bootstrapCache.get(url);
-  if (cached === undefined) return refreshBootstrap(url, deps, signal);
+  if (cached === undefined) return untilAborted(refreshBootstrap(url, deps), signal);
   if (deps.monotonic() - cached.fetchedAt >= BOOTSTRAP_TTL_MS) {
-    // A stale map answers now; the refresh runs in the background, bounded by the check
-    // timeout and shutdown. On failure the stale map stays and the next check retries.
-    refreshBootstrap(url, deps, attemptSignal(timeoutMs, deps.signal)).catch(() => {});
+    // A stale map answers now; the refresh runs in the background, bounded by its own cap
+    // and shutdown. On failure the stale map stays and the next check retries.
+    refreshBootstrap(url, deps).catch(() => {});
   }
   return cached.services;
 }
@@ -174,9 +178,8 @@ async function lookupExpiry(
   check: DomainCheck,
   deps: DomainDeps,
   signal: AbortSignal,
-  timeoutMs: number,
 ): Promise<number | undefined> {
-  const services = await loadBootstrap(deps, signal, timeoutMs);
+  const services = await loadBootstrap(deps, signal);
   const tld = check.domain.slice(check.domain.lastIndexOf(".") + 1);
   const service = services.get(tld);
   if (service === undefined) throw new RdapError(`no RDAP service for .${tld}`);
@@ -190,12 +193,7 @@ export async function attemptDomain(
   deps: DomainDeps,
 ): Promise<Attempt> {
   try {
-    const expiry = await lookupExpiry(
-      check,
-      deps,
-      attemptSignal(timeoutMs, deps.signal),
-      timeoutMs,
-    );
+    const expiry = await lookupExpiry(check, deps, attemptSignal(timeoutMs, deps.signal));
     if (expiry === undefined) {
       return { status: "down", reason: "expiry date not found in RDAP answer", certDaysLeft: null };
     }
