@@ -484,3 +484,40 @@ test("a wall clock step back does not change latency or the retry budget", async
     await close(server);
   }
 });
+
+/** A fetch that records each call and answers 200. */
+function recordingFetch(): { calls: string[]; fetch: typeof fetch } {
+  const calls: string[] = [];
+  const f = (async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return new Response("ok");
+  }) as unknown as typeof fetch;
+  return { calls, fetch: f };
+}
+
+test("a check URL that is not http or https gets no request", async () => {
+  const cases = [
+    ["file:///proc/self/environ", 'unsupported URL scheme "file:"'],
+    ["data:text/plain,x", 'unsupported URL scheme "data:"'],
+    ["not a url", "invalid URL"],
+  ];
+  for (const [url, reason] of cases) {
+    const rec = recordingFetch();
+    const r = await runCheck(
+      { id: "a", name: "A", url: url ?? "", intervalMs: 100_000, retries: 1 },
+      { ...deps, fetch: rec.fetch },
+    );
+    assert.deepEqual([r.status, r.statusCode, r.reason, r.attempts], ["down", null, reason, 2]);
+    assert.equal(rec.calls.length, 0);
+  }
+});
+
+test("an https URL with credentials is checked", async () => {
+  const rec = recordingFetch();
+  const r = await runCheck(
+    { id: "a", name: "A", url: "https://user:secret@h.test/", intervalMs: 1000 },
+    { ...deps, fetch: rec.fetch },
+  );
+  assert.equal(r.status, "up");
+  assert.equal(rec.calls.length, 1);
+});

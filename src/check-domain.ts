@@ -28,13 +28,20 @@ class RdapError extends Error {
   override name = "RdapError";
 }
 
-interface BootstrapEntry {
+/** The parsed bootstrap file: what a lookup and its redirects need. */
+interface Bootstrap {
   /** TLD to the first https RDAP service URL. */
   services: Map<string, string>;
+  /** `URL.host` of every https service URL in the file: the only redirect targets. */
+  hosts: Set<string>;
+}
+
+interface BootstrapEntry {
+  bootstrap: Bootstrap;
   fetchedAt: number;
 }
 
-// Keyed by bootstrap URL. Holds the TLD map only, not the raw file.
+// Keyed by bootstrap URL. Holds the parsed map and host set only, not the raw file.
 const bootstrapCache = new Map<string, BootstrapEntry>();
 
 async function readJson(res: Response, maxBytes: number): Promise<unknown> {
@@ -67,41 +74,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseBootstrap(doc: unknown): Map<string, string> {
+/** The host of an https service URL, or `undefined` for any other entry. */
+function httpsHost(url: unknown): string | undefined {
+  if (typeof url !== "string" || !url.startsWith("https://")) return undefined;
+  try {
+    return new URL(url).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseBootstrap(doc: unknown): Bootstrap {
   const services = new Map<string, string>();
+  const hosts = new Set<string>();
   const list = isRecord(doc) ? doc["services"] : undefined;
   if (!Array.isArray(list)) throw new RdapError("invalid RDAP bootstrap");
-  for (const entry of list) {
-    if (!Array.isArray(entry)) continue;
-    const [tlds, urls] = entry;
-    if (!Array.isArray(tlds) || !Array.isArray(urls)) continue;
-    const url = urls.find((u): u is string => typeof u === "string" && u.startsWith("https://"));
-    if (url === undefined) continue;
-    for (const tld of tlds) if (typeof tld === "string") services.set(tld.toLowerCase(), url);
-  }
-  return services;
+  for (const entry of list) addEntry(entry, services, hosts);
+  return { services, hosts };
+}
+
+/** Adds one `[tlds, urls]` entry of the bootstrap file; other shapes are skipped. */
+function addEntry(entry: unknown, services: Map<string, string>, hosts: Set<string>): void {
+  if (!Array.isArray(entry)) return;
+  const [tlds, urls] = entry;
+  if (!Array.isArray(tlds) || !Array.isArray(urls)) return;
+  for (const host of urls.map(httpsHost)) if (host !== undefined) hosts.add(host);
+  const url = urls.find((u): u is string => typeof u === "string" && u.startsWith("https://"));
+  if (url === undefined) return;
+  for (const tld of tlds) if (typeof tld === "string") services.set(tld.toLowerCase(), url);
 }
 
 // Single flight per bootstrap URL: concurrent checks share one fetch.
-const bootstrapInFlight = new Map<string, Promise<Map<string, string>>>();
+const bootstrapInFlight = new Map<string, Promise<Bootstrap>>();
 
 async function fetchBootstrap(
   url: string,
   deps: DomainDeps,
   signal: AbortSignal,
-): Promise<Map<string, string>> {
-  const res = await deps.fetch(url, { signal, headers: { accept: "application/json" } });
+): Promise<Bootstrap> {
+  const res = await deps.fetch(url, {
+    signal,
+    redirect: "manual",
+    headers: { accept: "application/json" },
+  });
+  if (res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => {});
+    throw new RdapError("RDAP bootstrap redirect not followed");
+  }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new RdapError(`RDAP bootstrap ${res.status}`);
   }
-  const services = parseBootstrap(await readJson(res, MAX_BOOTSTRAP_BYTES));
-  bootstrapCache.set(url, { services, fetchedAt: deps.monotonic() });
-  return services;
+  const bootstrap = parseBootstrap(await readJson(res, MAX_BOOTSTRAP_BYTES));
+  bootstrapCache.set(url, { bootstrap, fetchedAt: deps.monotonic() });
+  return bootstrap;
 }
 
 // Single flight: the fetch has its own lifetime (cap and shutdown), not that of the first caller.
-function refreshBootstrap(url: string, deps: DomainDeps): Promise<Map<string, string>> {
+function refreshBootstrap(url: string, deps: DomainDeps): Promise<Bootstrap> {
   let pending = bootstrapInFlight.get(url);
   if (pending === undefined) {
     const signal = attemptSignal(BOOTSTRAP_TIMEOUT_MS, deps.signal);
@@ -126,7 +156,7 @@ export async function bootstrapSettled(url: string): Promise<void> {
   await bootstrapInFlight.get(url)?.catch(() => {});
 }
 
-async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Map<string, string>> {
+async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Bootstrap> {
   const url = deps.bootstrapUrl ?? RDAP_BOOTSTRAP_URL;
   const cached = bootstrapCache.get(url);
   if (cached === undefined) return untilAborted(refreshBootstrap(url, deps), signal);
@@ -135,10 +165,33 @@ async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Map
     // and shutdown. On failure the stale map stays and the next check retries.
     refreshBootstrap(url, deps).catch(() => {});
   }
-  return cached.services;
+  return cached.bootstrap;
 }
 
-async function fetchRdap(url: string, deps: DomainDeps, signal: AbortSignal): Promise<unknown> {
+/**
+ * The URL of an RDAP redirect, or an `RdapError`: only `https:` targets on a host of the
+ * bootstrap file are followed. The reason names the scheme or the host, never the path.
+ */
+function redirectTarget(location: string, base: string, hosts: Set<string>): string {
+  let target: URL;
+  try {
+    target = new URL(location, base);
+  } catch {
+    throw new RdapError("RDAP redirect to invalid location");
+  }
+  if (target.protocol !== "https:") {
+    throw new RdapError(`RDAP redirect to ${target.protocol} not followed`);
+  }
+  if (!hosts.has(target.host)) throw new RdapError(`RDAP redirect to ${target.host} not followed`);
+  return target.href;
+}
+
+async function fetchRdap(
+  url: string,
+  hosts: Set<string>,
+  deps: DomainDeps,
+  signal: AbortSignal,
+): Promise<unknown> {
   let target = url;
   for (let hops = 0; ; hops++) {
     const res = await deps.fetch(target, {
@@ -150,7 +203,7 @@ async function fetchRdap(url: string, deps: DomainDeps, signal: AbortSignal): Pr
     if (res.status >= 300 && res.status < 400 && location !== null) {
       await res.body?.cancel().catch(() => {});
       if (hops >= MAX_REDIRECTS) throw new RdapError("too many redirects");
-      target = new URL(location, target).href;
+      target = redirectTarget(location, target, hosts);
       continue;
     }
     if (!res.ok) {
@@ -179,12 +232,12 @@ async function lookupExpiry(
   deps: DomainDeps,
   signal: AbortSignal,
 ): Promise<number | undefined> {
-  const services = await loadBootstrap(deps, signal);
+  const { services, hosts } = await loadBootstrap(deps, signal);
   const tld = check.domain.slice(check.domain.lastIndexOf(".") + 1);
   const service = services.get(tld);
   if (service === undefined) throw new RdapError(`no RDAP service for .${tld}`);
   const base = service.endsWith("/") ? service : `${service}/`;
-  return expiryOf(await fetchRdap(`${base}domain/${check.domain}`, deps, signal));
+  return expiryOf(await fetchRdap(`${base}domain/${check.domain}`, hosts, deps, signal));
 }
 
 export async function attemptDomain(

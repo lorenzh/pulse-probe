@@ -192,3 +192,97 @@ test("compat: no reason holds a header value or a body", async () => {
   const r = await run({ url: `${first.origin}/`, method: "POST", body: "sentinel-body" });
   assert.ok(!JSON.stringify(r).includes("sentinel"));
 });
+
+test("a redirect to file: is down with the scheme, with and without headers", async () => {
+  for (const headers of [undefined, { "X-Key": "sentinel-secret" }]) {
+    const s = await serve(() => ({ status: 302, location: "file:///etc/passwd" }));
+    const r = await run({ url: `${s.origin}/`, headers });
+    assert.deepEqual(
+      [r.status, r.statusCode, r.reason],
+      ["down", 302, "redirect to file: not followed"],
+    );
+    assert.equal(s.hits.length, 1);
+  }
+});
+
+test("a check without headers and body sends every request with manual redirects", async () => {
+  const modes: (string | undefined)[] = [];
+  const f = (async (_u: string | URL | Request, i?: RequestInit) => {
+    modes.push(i?.redirect);
+    return new Response("ok");
+  }) as unknown as typeof fetch;
+  const r = await runCheck(
+    { id: "r", name: "R", url: "http://x.test/", intervalMs: 1000 },
+    { fetch: f, now, monotonic: now, sleep, location: "default" },
+  );
+  assert.equal(r.status, "up");
+  assert.deepEqual(modes, ["manual"]);
+});
+
+test("without headers and body the method follows fetch's redirect rule", async () => {
+  const cases: [string, number, string][] = [
+    ["POST", 302, "GET"],
+    ["POST", 301, "GET"],
+    ["POST", 307, "POST"],
+    ["HEAD", 303, "HEAD"],
+    ["GET", 303, "GET"],
+    ["PUT", 303, "GET"],
+  ];
+  for (const [method, status, after] of cases) {
+    const s = await serve((url) => (url === "/" ? { status, location: "/next" } : { status: 200 }));
+    const r = await run({
+      url: `${s.origin}/`,
+      method,
+      headers: undefined,
+    } as Partial<ProbeCheck> & {
+      url: string;
+    });
+    assert.equal(r.status, "up");
+    assert.deepEqual(
+      s.hits.map((h) => h.method),
+      [method, after],
+      `${method} + ${status}`,
+    );
+  }
+});
+
+test("without headers and body a cross-origin redirect is followed", async () => {
+  const other = await serve(() => ({ status: 200 }));
+  const first = await serve(() => ({ status: 302, location: `${other.origin}/x` }));
+  const r = await run({ url: `${first.origin}/`, headers: undefined });
+  assert.equal(r.status, "up");
+  assert.equal(other.hits.length, 1);
+});
+
+test("without headers and body a redirect status in expectedStatus is still followed", async () => {
+  const s = await serve((url) =>
+    url === "/" ? { status: 302, location: "/next" } : { status: 200 },
+  );
+  const r = await run({ url: `${s.origin}/`, headers: undefined, expectedStatus: [302] });
+  assert.deepEqual([r.status, r.statusCode], ["down", 200]);
+  assert.equal(s.hits.length, 2);
+});
+
+test("without headers and body 21 redirects are too many and 20 are fine", async () => {
+  const loop = await serve(() => ({ status: 302, location: "/again" }));
+  const r = await run({ url: `${loop.origin}/`, headers: undefined });
+  assert.deepEqual([r.status, r.statusCode, r.reason], ["down", 302, "too many redirects"]);
+  assert.equal(loop.hits.length, 21);
+  const twenty = await serve((url) => {
+    const n = Number(url.slice(1) || "0");
+    return n < 20 ? { status: 302, location: `/${n + 1}` } : { status: 200 };
+  });
+  const ok = await run({ url: `${twenty.origin}/`, headers: undefined });
+  assert.equal(ok.status, "up");
+  assert.equal(twenty.hits.length, 21);
+});
+
+test("credentials of the check URL never reach a reason", async () => {
+  const s = await serve(() => ({ status: 302, location: "file:///etc/passwd" }));
+  const url = new URL(s.origin);
+  url.username = "user";
+  url.password = "sentinel-pass";
+  const r = await run({ url: url.href, headers: undefined });
+  assert.equal(r.reason, "redirect to file: not followed");
+  assert.ok(!JSON.stringify(r).includes("sentinel-pass"));
+});
