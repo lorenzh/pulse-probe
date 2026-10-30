@@ -23,7 +23,7 @@ Action: fix the URL or start the API. The probe retries on its own. After the fi
 
 ## `skipping invalid check: ...`
 
-Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be a finite number > 0`. The probe skips it and runs the others.
+Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others.
 Action: fix the check in the API's checks file and restart the API. The probe picks it up on its next reload.
 
 ## `contract version mismatch: ...`

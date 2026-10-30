@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import type { Result } from "@lorenzh/pulse-contract";
 import type { ProbeCheck } from "./client.ts";
+import { monotonic } from "./clock.ts";
 import { startScheduler, type Timer } from "./scheduler.ts";
 
 async function flush(): Promise<void> {
@@ -236,7 +237,7 @@ test("a wall clock step back does not pause the scheduler", async () => {
     let runs = 0;
     const s = startScheduler([check], {
       timer: f.timer,
-      now: f.now,
+      now: monotonic, // the clock that main.ts wires into the scheduler
       run: async (c) => {
         runs++;
         const before = Date.now();

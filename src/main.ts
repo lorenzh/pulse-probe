@@ -19,6 +19,7 @@ import {
   RETRY_MS,
   StartupAbortedError,
 } from "./client.ts";
+import { monotonic, now } from "./clock.ts";
 import { createMetrics, type Metrics, type PostMetricOutcome } from "./metrics.ts";
 import { startReloader } from "./reloader.ts";
 import { startScheduler } from "./scheduler.ts";
@@ -26,9 +27,6 @@ import { loadSettings, type Settings } from "./settings.ts";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
-// Wall clock for result timestamps and TLS expiry; monotonic clock for scheduling and latency.
-const now = (): number => Date.now();
-const monotonic = (): number => performance.now();
 const timer = {
   setTimeout: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
   clearTimeout: (h: unknown): void => clearTimeout(h as ReturnType<typeof setTimeout>),
