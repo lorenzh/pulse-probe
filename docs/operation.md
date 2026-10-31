@@ -78,7 +78,7 @@ Earlier versions exited with 1 on a bad token or reload interval.
 
 ## Stopping
 
-The signal handlers are registered before anything else. On `SIGINT` or `SIGTERM` the probe turns `/readyz` to 503 (`/healthz` stays 200), stops the reloader and scheduler, aborts the running checks and posts, closes the health listener, drops the result buffer (logging how many results were lost) and exits with code 0. This also works while the startup fetch is still retrying. Waiting for in-flight work is bounded by 5 s; when the bound is hit the probe logs a warning and still exits 0. A second signal has no extra effect.
+The signal handlers are registered before anything else. On `SIGINT` or `SIGTERM` the probe turns `/readyz` to 503 (`/healthz` stays 200), stops the reloader and scheduler, aborts the running checks and posts, closes the health listener, drops the result buffer (logging how many results were lost) and exits with code 0. This also works while the startup fetch is still retrying. Waiting for in-flight work is bounded by 5 s; when the bound is hit the probe logs a warning and exits 1. A second signal has no extra effect.
 
 ## Locations
 
