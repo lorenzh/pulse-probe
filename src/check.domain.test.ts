@@ -335,3 +335,94 @@ test("a check waiting on the shared bootstrap fetch keeps its own timeout", asyn
   assert.deepEqual([long.status, long.reason], ["up", null]);
   assert.equal(stub.requests.length, 1);
 });
+
+/** `depsFor`, with a fetch that records every URL and never leaves 127.0.0.1. */
+function guardedDeps(r: Rdap): { deps: CheckDeps; seen: string[] } {
+  const seen: string[] = [];
+  const local = localFetch(Number(new URL(r.url).port));
+  const guarded: CheckDeps["fetch"] = (input, init) => {
+    seen.push(String(input));
+    if (new URL(String(input)).hostname !== "127.0.0.1") {
+      return Promise.reject(new Error("test: external host"));
+    }
+    return local(input, init);
+  };
+  return { deps: depsFor(r, { fetch: guarded }), seen };
+}
+
+function redirectTo(r: Rdap, location: string): void {
+  r.setDomain((res) => {
+    res.statusCode = 302;
+    res.setHeader("location", location);
+    res.end();
+  });
+}
+
+test("an RDAP redirect is refused unless it is https to a bootstrap host", async () => {
+  const r = await rdap(() => events(90));
+  const port = Number(new URL(r.url).port);
+  const cases = [
+    [`http://127.0.0.1:${port}/domain/example.test`, "RDAP redirect to http: not followed"],
+    ["https://evil.test/domain/example.test", "RDAP redirect to evil.test not followed"],
+    ["https://ignored.test/domain/example.test", "RDAP redirect to ignored.test not followed"],
+    [`https://127.0.0.1:${port + 1}/x`, `RDAP redirect to 127.0.0.1:${port + 1} not followed`],
+    ["https://[bad/", "RDAP redirect to invalid location"],
+  ];
+  for (const [location, reason] of cases) {
+    redirectTo(r, location ?? "");
+    r.hits.domain = 0;
+    const { deps, seen } = guardedDeps(r);
+    const res = await runCheck(domain(), deps);
+    assert.deepEqual([res.status, res.reason, res.certDaysLeft], ["down", reason, null]);
+    assert.equal(r.hits.domain, 1);
+    assert.equal(seen.filter((u) => !u.includes("/dns.json")).length, 1);
+  }
+});
+
+test("a refused RDAP redirect is retried like any failed lookup", async () => {
+  const r = await rdap(() => events(90));
+  redirectTo(r, "https://evil.test/");
+  const res = await runCheck(domain({ retries: 2 }), guardedDeps(r).deps);
+  assert.equal(res.reason, "RDAP redirect to evil.test not followed");
+  assert.equal(res.attempts, 3);
+});
+
+test("a relative RDAP redirect on the bootstrap host is followed", async () => {
+  const r = await rdap(() => events(90));
+  let isFirst = true;
+  r.setDomain((res) => {
+    if (isFirst) {
+      isFirst = false;
+      res.statusCode = 302;
+      res.setHeader("location", "/domain/moved.test");
+      res.end();
+      return;
+    }
+    res.end(events(90));
+  });
+  const res = await runCheck(domain(), guardedDeps(r).deps);
+  assert.deepEqual([res.status, res.certDaysLeft], ["up", 90]);
+  assert.equal(r.hits.domain, 2);
+});
+
+test("a redirect of the bootstrap file is not followed", async () => {
+  const url = `https://bootstrap.stub/dns.json?n=${seq++}`;
+  const seen: { url: string; redirect: RequestInit["redirect"] }[] = [];
+  const fetchFn: CheckDeps["fetch"] = async (input, init) => {
+    seen.push({ url: String(input), redirect: init?.redirect });
+    return new Response(null, {
+      status: 302,
+      headers: { location: "https://elsewhere.stub/dns.json" },
+    });
+  };
+  const res = await runCheck(domain(), {
+    fetch: fetchFn,
+    now: () => NOW,
+    monotonic: () => mono,
+    sleep: async () => {},
+    location: "default",
+    rdapBootstrapUrl: url,
+  });
+  assert.deepEqual([res.status, res.reason], ["down", "RDAP bootstrap redirect not followed"]);
+  assert.deepEqual(seen, [{ url, redirect: "manual" }]);
+});

@@ -353,9 +353,31 @@ function isSecretBearing(check: HttpLikeCheck): boolean {
   return Object.keys(check.headers ?? {}).length > 0 || check.body !== undefined;
 }
 
+/** The contract's rule, kept here too: the probe does not trust the checks it is served. */
+function isHttpProtocol(protocol: string): boolean {
+  return protocol === "http:" || protocol === "https:";
+}
+
+/** Why the check URL gets no request, or `null`. The reason never holds the URL. */
+function urlFailure(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "invalid URL";
+  }
+  // After `new URL`, a protocol matches `[a-z][a-z0-9+.-]*:`, so quoting it is safe.
+  return isHttpProtocol(parsed.protocol) ? null : `unsupported URL scheme "${parsed.protocol}"`;
+}
+
+type Hop = { url: string; method: string } | { reason: string };
+
 /**
- * Sends the request. A check with headers or a body follows redirects here, one hop at a time,
- * and only within the same origin. Other checks let fetch follow them.
+ * Sends the request and follows redirects here, one hop at a time, so that every hop is checked:
+ * only `http:` and `https:` targets get a request. A check with headers or a body follows
+ * redirects only within the same origin, and a 301, 302 or 303 only for GET; a redirect status in
+ * `expectedStatus` is judged.
+ * Other checks keep fetch's follow mode: any origin, the method rule of fetch, at most 20 hops.
  */
 async function fetchFollowing(
   check: HttpLikeCheck,
@@ -364,12 +386,15 @@ async function fetchFollowing(
   expected: ExpectedStatus[],
   signal: AbortSignal,
 ): Promise<Fetched> {
+  const failure = urlFailure(check.url);
+  if (failure !== null) return { stop: { statusCode: null, reason: failure } };
   const isSecret = isSecretBearing(check);
   let url = check.url;
+  let current = method;
   for (let hops = 0; ; hops++) {
     const res = await deps.fetch(url, {
-      method,
-      redirect: isSecret ? "manual" : "follow",
+      method: current,
+      redirect: "manual",
       // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
       headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
       // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
@@ -378,41 +403,60 @@ async function fetchFollowing(
     });
     const location = res.headers.get("location");
     if (
-      !isSecret ||
       !REDIRECT_STATUSES.includes(res.status) ||
       location === null ||
-      matchesStatus(res.status, expected)
+      (isSecret && matchesStatus(res.status, expected))
     ) {
       return { res };
     }
     // Best-effort body cancel of the hop; failure to cancel is irrelevant.
     await res.body?.cancel().catch(() => {});
-    const next = nextHop(res.status, method, location, url, hops);
+    const next = isSecret
+      ? secretHop(res.status, current, location, url, hops)
+      : openHop(res.status, current, location, url, hops);
     if ("reason" in next) return { stop: { statusCode: res.status, reason: next.reason } };
     url = next.url;
+    current = next.method;
   }
 }
 
-/** The next URL of a redirect, or the reason it is not followed. */
-function nextHop(
-  status: number,
-  method: string,
-  location: string,
-  url: string,
-  hops: number,
-): { url: string } | { reason: string } {
-  if (status <= 303 && method !== "GET")
-    return { reason: `HTTP ${status} redirect not followed for ${method}` };
+/** The redirect target, or the reason it gets no request: it does not parse or is not http(s). */
+function hopTarget(location: string, url: string): URL | { reason: string } {
   let target: URL;
   try {
     target = new URL(location, url);
   } catch {
     return { reason: "redirect to invalid location" };
   }
-  const current = new URL(url);
-  if (target.origin !== current.origin)
+  return isHttpProtocol(target.protocol)
+    ? target
+    : { reason: `redirect to ${target.protocol} not followed` };
+}
+
+/** The next hop of a check with headers or a body: GET only, same origin. */
+function secretHop(
+  status: number,
+  method: string,
+  location: string,
+  url: string,
+  hops: number,
+): Hop {
+  if (status <= 303 && method !== "GET")
+    return { reason: `HTTP ${status} redirect not followed for ${method}` };
+  const target = hopTarget(location, url);
+  if (!(target instanceof URL)) return target;
+  if (target.origin !== new URL(url).origin)
     return { reason: `redirect to ${target.origin} not followed` };
-  return hops >= MAX_REDIRECTS ? { reason: "too many redirects" } : { url: target.href };
+  return hops >= MAX_REDIRECTS ? { reason: "too many redirects" } : { url: target.href, method };
+}
+
+/** The next hop of a check without headers and body, with the method rule of fetch's follow mode. */
+function openHop(status: number, method: string, location: string, url: string, hops: number): Hop {
+  const target = hopTarget(location, url);
+  if (!(target instanceof URL)) return target;
+  if (hops >= MAX_REDIRECTS) return { reason: "too many redirects" };
+  const isToGet = (status === 303 && method !== "HEAD") || (status <= 302 && method === "POST");
+  return { url: target.href, method: isToGet ? "GET" : method };
 }
 
 /** Header values as strings; an unresolved `{ env }` reference is dropped (the client skips such checks). */

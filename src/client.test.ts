@@ -305,6 +305,28 @@ test("loadChecks skips an empty url or host and names the check id", async () =>
   );
 });
 
+test("loadChecks skips a check with a non-http url and logs its path", async () => {
+  const logs: string[] = [];
+  const fakeFetch = (async () =>
+    Response.json(
+      [
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+        { id: "ok", name: "O", url: "http://x", intervalMs: 5 },
+        { id: "f", name: "F", url: "file:///etc/passwd", intervalMs: 5 },
+      ],
+      { headers: { "x-pulse-contract": "1" } },
+    )) as unknown as typeof fetch;
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+  const checks = await loadChecks("http://api", { fetch: fakeFetch, log: (m) => logs.push(m) });
+  assert.deepEqual(
+    checks.map((c) => c.id),
+    ["ok"],
+  );
+  assert.deepEqual(logs, [
+    "skipping invalid check f: checks[1].url: must be an http: or https: URL",
+  ]);
+});
+
 test("fetchChecks times out on stalled headers and retries", async () => {
   let calls = 0;
   const fakeFetch = (() => {
