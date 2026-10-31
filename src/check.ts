@@ -374,8 +374,9 @@ type Hop = { url: string; method: string } | { reason: string };
 
 /**
  * Sends the request and follows redirects here, one hop at a time, so that every hop is checked:
- * only `http:` and `https:` targets get a request. A check with headers or a body follows only
- * GET redirects within the same origin, and a redirect status in `expectedStatus` is judged.
+ * only `http:` and `https:` targets get a request. A check with headers or a body follows
+ * redirects only within the same origin, and a 301, 302 or 303 only for GET; a redirect status in
+ * `expectedStatus` is judged.
  * Other checks keep fetch's follow mode: any origin, the method rule of fetch, at most 20 hops.
  */
 async function fetchFollowing(
