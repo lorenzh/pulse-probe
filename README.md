@@ -22,7 +22,9 @@ docker build --tag pulse-probe:local .
 docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN='<token>' pulse-probe:local
 ```
 
-Replace `<token>` with the real probe token.
+Replace `<token>` with the real probe token. `PULSE_PROBE_TOKEN_FILE` can replace `PULSE_PROBE_TOKEN` and point at a file that holds the token: see [probe token](docs/configuration.md#probe-token) and [token from a file (Compose secrets)](docs/install.md#token-from-a-file-compose-secrets).
+
+Checks reach whatever the probe's network reaches, internal addresses included: see [network reach of checks](docs/configuration.md#network-reach-of-checks).
 
 ## Documentation
 

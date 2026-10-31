@@ -10,7 +10,7 @@ import {
 } from "@lorenzh/pulse-kit";
 import { parseLocation } from "./location.ts";
 import { parseReloadMs } from "./reload-interval.ts";
-import { parseToken } from "./token.ts";
+import { readProbeToken } from "./token.ts";
 
 const DEFAULT_API_URL = "http://localhost:3000";
 export const DEFAULT_HEALTH_HOST = "127.0.0.1";
@@ -51,13 +51,16 @@ function readApiUrl(env: Env): string {
   return DEFAULT_API_URL;
 }
 
-/** Reads and validates the environment. Throws `StartupError` with a one-line message. */
-export function loadSettings(env: Env): Settings {
+/**
+ * Reads and validates the environment. `readFile` reads the token file when
+ * PULSE_PROBE_TOKEN_FILE is set. Throws `StartupError` with a one-line message.
+ */
+export function loadSettings(env: Env, readFile: (path: string) => string): Settings {
   try {
     return {
       apiUrl: readApiUrl(env),
       location: parseLocation(env.PULSE_LOCATION),
-      token: parseToken(env.PULSE_PROBE_TOKEN),
+      token: readProbeToken(env, readFile),
       reloadMs: parseReloadMs(env.PULSE_CHECKS_RELOAD_MS),
       bufferMaxResults: readMs(env, "PULSE_BUFFER_MAX_RESULTS", {
         fallback: DEFAULT_BUFFER_MAX_RESULTS,

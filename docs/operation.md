@@ -37,12 +37,12 @@ The API reads its checks file at startup. After the file changes, restart the AP
 
 ## Changing the token or location
 
-Both are read at startup. Restart the probe after changing `PULSE_PROBE_TOKEN` or `PULSE_LOCATION`.
+Both are read at startup. Restart the probe after changing `PULSE_PROBE_TOKEN`, `PULSE_PROBE_TOKEN_FILE` or `PULSE_LOCATION`. With a token file, replace the file content and restart the probe; the file is read only at startup.
 
 Token rotation:
 
 1. The API owner adds the new token and restarts the API.
-2. Set the new `PULSE_PROBE_TOKEN` and restart the probe.
+2. Set the new `PULSE_PROBE_TOKEN`, or write the new token into the file of `PULSE_PROBE_TOKEN_FILE`, and restart the probe.
 3. The API owner removes the old token and restarts the API again. The API reads its tokens only at startup, so the old token works until this restart. After it, the old token gets 401.
 
 Between steps 1 and 3 the old token still works. Roll out in this order when you introduce tokens: give probes their tokens first (an old API ignores the header), then enable tokens on the API.

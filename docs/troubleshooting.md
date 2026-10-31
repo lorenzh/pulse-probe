@@ -1,9 +1,29 @@
 # Troubleshooting
 
-## `PULSE_PROBE_TOKEN is missing or empty`
+## `PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set`
 
-Cause: the variable is unset or blank. The probe exits with code 2.
-Action: set `PULSE_PROBE_TOKEN` to the token that the API owner entered. In Docker, pass `-e PULSE_PROBE_TOKEN='<token>'`. Replace `<token>` with the real token.
+Cause: both variables are unset or blank. The probe exits with code 2.
+Action: set `PULSE_PROBE_TOKEN` to the token that the API owner entered, or `PULSE_PROBE_TOKEN_FILE` to the path of a file that holds it. In Docker, pass `-e PULSE_PROBE_TOKEN='<token>'`. Replace `<token>` with the real token.
+
+## `set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE`
+
+Cause: both variables are set. A likely source is a `.env` file in the working directory, which Bun loads on its own (see [install](install.md#env-files)). The probe exits with code 2 and does not read the file.
+Action: remove one of them. With a token file, remove `PULSE_PROBE_TOKEN` from the environment and from any `.env` file.
+
+## `PULSE_PROBE_TOKEN_FILE=<path>: cannot read (<CODE>)`
+
+Cause: the probe cannot read the file. `ENOENT`: it does not exist (check the path and the mount). `EACCES`: the probe user (uid 1000 in the image) may not read it. `EISDIR`: the path is a directory. Without a code the line ends in `cannot read`. The probe exits with code 2.
+Action: fix the path, the mount or the file mode, for example `chmod 0444 probe-token.txt`, then restart the probe.
+
+## `PULSE_PROBE_TOKEN_FILE=<path>: file is empty`
+
+Cause: the file is empty or holds only whitespace. The probe exits with code 2.
+Action: write the token into the file, for example with `openssl rand -hex 32 > probe-token.txt`, and give the same token to the API owner.
+
+## `PULSE_PROBE_TOKEN_FILE=<path>: must hold one line`
+
+Cause: the trimmed content holds a line break, so it is more than one token. The probe exits with code 2. A trailing newline alone is fine.
+Action: leave only the token in the file, on one line.
 
 ## `PULSE_LOCATION is longer than 64 characters`
 
