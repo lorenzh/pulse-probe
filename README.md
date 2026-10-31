@@ -22,6 +22,8 @@ docker build --tag pulse-probe:local .
 docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN='<token>' pulse-probe:local
 ```
 
+The image runs `bun --no-env-file`: it never reads a `.env` file, also not one mounted into `/app`. Pass settings with `-e`, `--env-file` or Compose `environment:`.
+
 Released images are on `ghcr.io/lorenzh/pulse-probe` (linux/amd64 and linux/arm64, tags `X.Y.Z`, `X.Y` and `X`, no `latest`):
 
 ```sh

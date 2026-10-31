@@ -7,8 +7,8 @@ Action: set `PULSE_PROBE_TOKEN` to the token that the API owner entered, or `PUL
 
 ## `set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE`
 
-Cause: both variables are set. A likely source is a `.env` file in the working directory, which Bun loads on its own (see [install](install.md#env-files)). The probe exits with code 2 and does not read the file.
-Action: remove one of them. With a token file, remove `PULSE_PROBE_TOKEN` from the environment and from any `.env` file.
+Cause: both variables are set in the environment (`-e`, `--env-file`, Compose `environment:`/`env_file:`; from source also the shell or a `.env` in the working directory). The probe exits with code 2 and does not read the file.
+Action: remove one of them. With a token file, remove `PULSE_PROBE_TOKEN` from all of these sources.
 
 ## `PULSE_PROBE_TOKEN_FILE=<path>: cannot read (<CODE>)`
 
