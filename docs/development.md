@@ -45,8 +45,8 @@ bun test src/check.test.ts
 
 CI (`.github/workflows/ci.yml`) has three jobs:
 
-- `check`: lint, typecheck and tests through the shared `check.yml`.
-- `docker`: builds the image and checks that it holds no test files. It runs twice, natively on `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64). `fail-fast` is off, so one failing leg keeps the other leg's log.
+- `check`: lint, typecheck and tests through the shared `check.yml`. Lint also runs `pulse-workflows`, which fails on an action that is not approved, a checkout without `persist-credentials: false`, or a `pulse-config` ref that differs from the `package.json` pin.
+- `docker`: builds the image, checks that it holds no test files, and runs `Image ignores dotenv files` (`scripts/image-dotenv.sh`), which checks that the service and its healthcheck ignore `.env`, `.env.production` and `.env.local` mounted into `/app`. It runs twice, natively on `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64). `fail-fast` is off, so one failing leg keeps the other leg's log.
 - `release`: runs only on a tag and calls the shared `release.yml`. See [Releasing](#releasing).
 
 The `check.yml` ref, the `release.yml` ref and `@lorenzh/pulse-config` in `package.json` (with `bun.lock`) carry the same SHA. Change them together.
