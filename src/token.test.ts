@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { StartupError } from "@lorenzh/pulse-kit";
 import { readProbeToken } from "./token.ts";
 
+// JSON.stringify leaves U+2028/U+2029 raw; agent harnesses split their JSONL output on them.
+const label = (value: string) =>
+  JSON.stringify(value).replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`);
+
 const SENTINEL = "tok-sentinel-481";
 
 class FakeFsError extends Error {
@@ -100,7 +104,7 @@ test("a blank PULSE_PROBE_TOKEN with a file uses the file", () => {
 });
 
 for (const content of ["", " \n\t\n"]) {
-  test(`file content ${JSON.stringify(content)} is empty`, () => {
+  test(`file content ${label(content)} is empty`, () => {
     assert.equal(
       startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, reader(content).read)),
       "PULSE_PROBE_TOKEN_FILE=/t: file is empty",
@@ -153,14 +157,14 @@ const NOT_PRINTABLE = [
 ];
 
 for (const content of NOT_PRINTABLE) {
-  test(`file content ${JSON.stringify(content)} is rejected as not printable ASCII`, () => {
+  test(`file content ${label(content)} is rejected as not printable ASCII`, () => {
     assert.equal(
       startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, reader(content).read)),
       "PULSE_PROBE_TOKEN_FILE=/t: must hold printable ASCII",
     );
   });
 
-  test(`PULSE_PROBE_TOKEN ${JSON.stringify(content)} is rejected as not printable ASCII`, () => {
+  test(`PULSE_PROBE_TOKEN ${label(content)} is rejected as not printable ASCII`, () => {
     assert.equal(
       startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN: content }, reader("x").read)),
       "PULSE_PROBE_TOKEN must hold printable ASCII",
