@@ -25,6 +25,12 @@ Action: write the token into the file, for example with `openssl rand -hex 32 > 
 Cause: the trimmed content holds a line break, so it is more than one token. The probe exits with code 2. A trailing newline alone is fine.
 Action: leave only the token in the file, on one line.
 
+## `PULSE_PROBE_TOKEN_FILE=<path>: must hold printable ASCII`
+
+Also `PULSE_PROBE_TOKEN must hold printable ASCII` for the variable.
+Cause: the trimmed token holds a character that is not printable ASCII (space to `~`): a NUL byte, a tab, a non-ASCII letter, or bytes that are not UTF-8. A file saved as UTF-16, for example by PowerShell `>`, or a path that points at the wrong file causes this too. Such a value cannot be sent as an `Authorization` header. The probe exits with code 2 and does not print the value.
+Action: write the token as plain ASCII, for example with `openssl rand -hex 32 > probe-token.txt`. On Windows use `Set-Content -Encoding ascii`. Restart the probe.
+
 ## `PULSE_LOCATION is longer than 64 characters`
 
 Cause: the trimmed location is too long. The probe exits at startup.

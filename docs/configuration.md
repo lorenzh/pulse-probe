@@ -59,6 +59,8 @@ See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/d
   - `PULSE_PROBE_TOKEN_FILE=<path>: cannot read (<CODE>)`: the file cannot be read, with the error code, for example `ENOENT`, `EACCES` or `EISDIR`. Without a code the message ends in `cannot read`.
   - `PULSE_PROBE_TOKEN_FILE=<path>: file is empty`: the content is blank after trim.
   - `PULSE_PROBE_TOKEN_FILE=<path>: must hold one line`: the trimmed content still holds a line break.
+  - `PULSE_PROBE_TOKEN_FILE=<path>: must hold printable ASCII`: the trimmed content holds another character than printable ASCII (space to `~`), for example a NUL byte, a tab, a non-ASCII letter, or bytes that are not UTF-8. A file saved as UTF-16 (PowerShell `>`) gives this message too.
+  - `PULSE_PROBE_TOKEN must hold printable ASCII`: the same rule for the trimmed variable.
 - No message ever contains the token or the file content.
 - The token is read once at startup. Restart the probe after you change the variable or the file.
 - The file must be readable by the probe's user. In the Docker image that is `bun`, uid 1000.
@@ -208,5 +210,7 @@ There is no deny list in the code. To limit the reach:
 ## Migration
 
 The startup message for a missing token changed from `PULSE_PROBE_TOKEN is missing or empty` to `PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set`. Update log matchers that look for the old text. The exit code is still 2.
+
+A token must now hold only printable ASCII (space to `~`). A `PULSE_PROBE_TOKEN` with other characters stops the start with `PULSE_PROBE_TOKEN must hold printable ASCII` and exit code 2. Before, the probe started and every API request failed, because such a value is not a valid `Authorization` header. A token from `openssl rand -hex 32` is not affected.
 
 Breaking: a header `{ "env": "NAME" }` now needs `NAME` to start with `PULSE_HEADER_`. Checks that reference other names are skipped, with a log line, until renamed. Rename the variable in every probe location and in the checks file, for example `SVC_TOKEN` to `PULSE_HEADER_SVC_TOKEN`.

@@ -2,6 +2,8 @@ import { type Env, readString, StartupError } from "@lorenzh/pulse-kit";
 
 const FILE_VAR = "PULSE_PROBE_TOKEN_FILE";
 const FS_CODE = /^E[A-Z0-9]+$/;
+// fetch rejects other header bytes and echoes the whole value in its error, which the client logs.
+const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
 
 type TokenSource = { kind: "env"; token: string } | { kind: "file"; path: string };
 
@@ -12,7 +14,12 @@ function tokenSource(env: Env): TokenSource {
   if (token !== undefined && path !== undefined) {
     throw new StartupError("set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE");
   }
-  if (token !== undefined) return { kind: "env", token };
+  if (token !== undefined) {
+    if (!PRINTABLE_ASCII.test(token)) {
+      throw new StartupError("PULSE_PROBE_TOKEN must hold printable ASCII");
+    }
+    return { kind: "env", token };
+  }
   if (path !== undefined) return { kind: "file", path };
   throw new StartupError("PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set");
 }
@@ -36,6 +43,9 @@ function readTokenFile(path: string, readFile: (path: string) => string): string
   const token = content.trim();
   if (token === "") throw new StartupError(`${FILE_VAR}=${path}: file is empty`);
   if (/[\r\n]/.test(token)) throw new StartupError(`${FILE_VAR}=${path}: must hold one line`);
+  if (!PRINTABLE_ASCII.test(token)) {
+    throw new StartupError(`${FILE_VAR}=${path}: must hold printable ASCII`);
+  }
   return token;
 }
 

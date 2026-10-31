@@ -176,7 +176,7 @@ test("healthz, metrics, debug logs and clean shutdown against a fake API", async
   assert.ok(!r.stdout().includes("secret=abc"));
 });
 
-function tokenFile(name: string, content: string): string {
+function tokenFile(name: string, content: string | Uint8Array): string {
   const path = join(dir, name);
   writeFileSync(path, content);
   return path;
@@ -184,7 +184,11 @@ function tokenFile(name: string, content: string): string {
 
 async function startupLine(env: Record<string, string>): Promise<string> {
   const r = run(env);
-  assert.equal((await r.exit).code, 2);
+  // A probe that passed the token check keeps running; stop it so the asserts below can fail.
+  const timer = setTimeout(() => r.child.kill("SIGTERM"), 3000);
+  const { code } = await r.exit;
+  clearTimeout(timer);
+  assert.equal(code, 2, `expected exit 2 at startup, stderr: ${r.stderr()}`);
   assert.ok(!r.stdout().includes(SENTINEL));
   assert.ok(!r.stderr().includes(SENTINEL));
   const lines = r.stderr().trimEnd().split("\n");
@@ -253,5 +257,31 @@ test("a directory as token file exits 2 with the path and EISDIR", async () => {
   assert.equal(
     await startupLine({ PULSE_PROBE_TOKEN_FILE: dir }),
     `pulse-probe: PULSE_PROBE_TOKEN_FILE=${dir}: cannot read (EISDIR)`,
+  );
+});
+
+for (const [name, content] of [
+  ["a NUL byte", Buffer.from(`${SENTINEL}\u0000x\n`)],
+  ["invalid UTF-8", Buffer.concat([Buffer.from(SENTINEL), Buffer.from([0xff, 0xfe])])],
+  [
+    "UTF-16 with a BOM and no newline",
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SENTINEL, "utf16le")]),
+  ],
+] as const) {
+  test(`a token file with ${name} exits 2 without printing the content`, async () => {
+    const api = await fakeApi((_q, res) => res.end("[]"));
+    const path = tokenFile(`token-${name.replaceAll(" ", "-")}`, content);
+    assert.equal(
+      await startupLine({ PULSE_PROBE_TOKEN_FILE: path, PULSE_API_URL: api }),
+      `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: must hold printable ASCII`,
+    );
+  });
+}
+
+test("a PULSE_PROBE_TOKEN with a non-ASCII character exits 2 without printing it", async () => {
+  const api = await fakeApi((_q, res) => res.end("[]"));
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN: `${SENTINEL}\u2028x`, PULSE_API_URL: api }),
+    "pulse-probe: PULSE_PROBE_TOKEN must hold printable ASCII",
   );
 });

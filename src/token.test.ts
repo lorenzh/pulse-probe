@@ -141,3 +141,35 @@ for (const err of [
     );
   });
 }
+
+const NOT_PRINTABLE = [
+  `${SENTINEL}\u0000x`,
+  `${SENTINEL}\tx`,
+  `${SENTINEL}\u007f`,
+  `${SENTINEL}\ufffd\ufffd`,
+  `${SENTINEL}\ufeffx`,
+  `${SENTINEL}\u2028x`,
+  `${SENTINEL}\u00e9`,
+];
+
+for (const content of NOT_PRINTABLE) {
+  test(`file content ${JSON.stringify(content)} is rejected as not printable ASCII`, () => {
+    assert.equal(
+      startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, reader(content).read)),
+      "PULSE_PROBE_TOKEN_FILE=/t: must hold printable ASCII",
+    );
+  });
+
+  test(`PULSE_PROBE_TOKEN ${JSON.stringify(content)} is rejected as not printable ASCII`, () => {
+    assert.equal(
+      startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN: content }, reader("x").read)),
+      "PULSE_PROBE_TOKEN must hold printable ASCII",
+    );
+  });
+}
+
+test("a token with an inner space and all printable ASCII is accepted", () => {
+  const token = "a b~!#$%&'*+-.^_`|0Z";
+  assert.equal(readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, reader(token).read), token);
+  assert.equal(readProbeToken({ PULSE_PROBE_TOKEN: token }, reader("x").read), token);
+});
