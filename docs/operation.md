@@ -49,7 +49,7 @@ Between steps 1 and 3 the old token still works. Roll out in this order when you
 
 ## Health and metrics
 
-Set `PULSE_HEALTH_PORT` to start an HTTP listener (off by default). The Docker image enables it on port 9100 and has a `HEALTHCHECK` that fetches `/healthz` (liveness). Do not publish the port: `/metrics` holds check ids.
+Set `PULSE_HEALTH_PORT` to start an HTTP listener (off by default). The Docker image enables it on port 9100 and has a `HEALTHCHECK` that fetches `127.0.0.1:$PULSE_HEALTH_PORT/healthz` (liveness). The healthcheck reads the port at run time and uses 9100 when the variable is unset or empty. It does not support `PULSE_HEALTH_PORT=0` (ephemeral port). Do not publish the port: `/metrics` holds check ids.
 
 - `GET /healthz`: liveness. `200 ok` whenever the listener serves, also while the probe shuts down, until the listener closes. The Docker `HEALTHCHECK` uses it. **Breaking change of meaning:** it used to report readiness; use `/readyz` for that.
 - `GET /readyz`: readiness. `200 ok` once the checks were fetched at least once and the probe is not shutting down, else `503` with a short reason. A failed post does not make the probe unready.
