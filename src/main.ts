@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Result } from "@lorenzh/pulse-contract";
 import {
@@ -26,6 +27,8 @@ import { startReloader } from "./reloader.ts";
 import { loadSettings, type Settings } from "./settings.ts";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
+
+const readTokenFile = (path: string): string => readFileSync(path, "utf8");
 
 const timer = {
   setTimeout: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
@@ -211,7 +214,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
 }
 
 async function start(): Promise<void> {
-  const settings = loadSettings(process.env);
+  const settings = loadSettings(process.env, readTokenFile);
   logger = createLogger({ level: settings.logLevel, now });
   const metrics = createMetrics();
   let hasChecks = false;

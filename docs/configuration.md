@@ -8,7 +8,8 @@ These are all the variables the code reads (`src/main.ts`).
 | -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `PULSE_API_URL`            | `http://localhost:3000` | Base URL of pulse-api. Must be an http(s) URL without credentials, query or fragment; empty or invalid exits 2. The trailing slash is removed.         |
 | `PULSE_LOCATION`           | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).                                                                        |
-| `PULSE_PROBE_TOKEN`        | none (required)         | Secret token that authorizes this probe to post results to pulse-api.                                                                                  |
+| `PULSE_PROBE_TOKEN`        | none                    | Secret token that authorizes this probe to post results to pulse-api. Required unless `PULSE_PROBE_TOKEN_FILE` is set.                                 |
+| `PULSE_PROBE_TOKEN_FILE`   | unset                   | File whose trimmed content is the token. Set exactly one of `PULSE_PROBE_TOKEN` and `PULSE_PROBE_TOKEN_FILE`; see [probe token](#probe-token).         |
 | `PULSE_CHECKS_RELOAD_MS`   | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                             |
 | `PULSE_BUFFER_MAX_RESULTS` | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                              |
 | `PULSE_BUFFER_MAX_AGE_MS`  | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400. |
@@ -49,7 +50,20 @@ How the API combines locations is described in [quorum and incidents](https://gi
 See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#locations-and-tokens).
 
 - The probe sends the token as `Authorization: Bearer <token>` on `POST /results`. It also sends it on `GET /probe/checks` (see below). It does not send it on the public `GET /checks`.
-- The value is trimmed. Missing or blank makes the probe exit at startup with `PULSE_PROBE_TOKEN is missing or empty`. The message never contains the value.
+- The token comes from one of two sources: `PULSE_PROBE_TOKEN` holds it, or `PULSE_PROBE_TOKEN_FILE` holds the path of a file that holds it (Docker or Kubernetes secrets). Set exactly one.
+- A variable counts as set when it is present and not blank after trim. `PULSE_PROBE_TOKEN=` (empty) counts as unset.
+- Both values are trimmed. A relative path resolves against the working directory. The file is read as UTF-8 and its content is trimmed, so a trailing newline is fine.
+- The probe decides on the source before it reads any file. Each of these stops the start with exit code 2 and one line `pulse-probe: <message>`:
+  - `set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE`: both are set. The file is not read.
+  - `PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set`: neither is set.
+  - `PULSE_PROBE_TOKEN_FILE=<path>: cannot read (<CODE>)`: the file cannot be read, with the error code, for example `ENOENT`, `EACCES` or `EISDIR`. Without a code the message ends in `cannot read`.
+  - `PULSE_PROBE_TOKEN_FILE=<path>: file is empty`: the content is blank after trim.
+  - `PULSE_PROBE_TOKEN_FILE=<path>: must hold one line`: the trimmed content still holds a line break.
+  - `PULSE_PROBE_TOKEN_FILE=<path>: must hold printable ASCII`: the trimmed content holds another character than printable ASCII (space to `~`), for example a NUL byte, a tab, a non-ASCII letter, or bytes that are not UTF-8. A file saved as UTF-16 (PowerShell `>`) gives this message too.
+  - `PULSE_PROBE_TOKEN must hold printable ASCII`: the same rule for the trimmed variable.
+- No message ever contains the token or the file content.
+- The token is read once at startup. Restart the probe after you change the variable or the file.
+- The file must be readable by the probe's user. In the Docker image that is `bun`, uid 1000.
 - Create a token with `openssl rand -hex 32`. The API owner enters it, with the probe's location, in the API's tokens file.
 - `PULSE_LOCATION` must equal the location of the token. Otherwise the API answers 403 for every result.
 - The token is never logged. It travels in clear over plain HTTP, so run the API behind TLS or on a private network.
@@ -172,6 +186,31 @@ HTTP, TCP, DNS and domain checks retry. `retries` is an integer 0..10 (default 0
 
 Each check runs immediately at startup and then every `intervalMs`, measured from the start of the previous run. A check never overlaps with itself: the next run is scheduled only after the previous one, including its result post, has finished. If a run takes longer than the interval, the next one starts at once.
 
+## Network reach of checks
+
+HTTP, TCP and DNS checks run from the probe's host and network. The probe connects to whatever the check names:
+
+- public hosts;
+- RFC 1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`);
+- loopback (`127.0.0.0/8`, `::1`);
+- link-local (`169.254.0.0/16`, including the cloud metadata address `169.254.169.254`, and `fe80::/10`);
+- unique local IPv6 (`fc00::/7`).
+
+DNS checks can query any `resolver` address. In the container, loopback is the container itself, but the container network and the networks the host can reach still apply.
+
+TCP reasons tell `connection refused` from `timeout`, and HTTP checks report status codes. So whoever can edit checks (the API checks file, or the admin config routes of pulse-api) can use probes to scan ports and services in the probe's network. Treat check editors as trusted with the probe's network reach.
+
+There is no deny list in the code. To limit the reach:
+
+- Run probes in a network without access to internal services they do not monitor.
+- Restrict egress with firewall rules. Block `169.254.169.254` and internal ranges unless a check needs them.
+- Use one dedicated probe (location) per internal zone you want to monitor.
+- Keep the admin tokens and the checks file to the people who may do this.
+
 ## Migration
+
+The startup message for a missing token changed from `PULSE_PROBE_TOKEN is missing or empty` to `PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set`. Update log matchers that look for the old text. The exit code is still 2.
+
+A token must now hold only printable ASCII (space to `~`). A `PULSE_PROBE_TOKEN` with other characters stops the start with `PULSE_PROBE_TOKEN must hold printable ASCII` and exit code 2. Before, the probe started and every API request failed, because such a value is not a valid `Authorization` header. A token from `openssl rand -hex 32` is not affected.
 
 Breaking: a header `{ "env": "NAME" }` now needs `NAME` to start with `PULSE_HEADER_`. Checks that reference other names are skipped, with a log line, until renamed. Rename the variable in every probe location and in the checks file, for example `SVC_TOKEN` to `PULSE_HEADER_SVC_TOKEN`.

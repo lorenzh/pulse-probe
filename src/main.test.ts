@@ -1,13 +1,20 @@
 import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const MAIN = new URL("./main.ts", import.meta.url).pathname;
 
+const SENTINEL = "tok-sentinel-481";
+const dir = mkdtempSync(join(tmpdir(), "probe-main-"));
+
 const servers: http.Server[] = [];
 after(async () => {
+  rmSync(dir, { recursive: true, force: true });
   for (const s of servers) {
     s.closeAllConnections();
     await new Promise<void>((resolve) => s.close(() => resolve()));
@@ -167,4 +174,114 @@ test("healthz, metrics, debug logs and clean shutdown against a fake API", async
   assert.equal(debug.check, "home");
   assert.match(String(debug.time), /^\d{4}-\d\d-\d\dT/);
   assert.ok(!r.stdout().includes("secret=abc"));
+});
+
+function tokenFile(name: string, content: string | Uint8Array): string {
+  const path = join(dir, name);
+  writeFileSync(path, content);
+  return path;
+}
+
+async function startupLine(env: Record<string, string>): Promise<string> {
+  const r = run(env);
+  // A probe that passed the token check keeps running; stop it so the asserts below can fail.
+  const timer = setTimeout(() => r.child.kill("SIGTERM"), 3000);
+  const { code } = await r.exit;
+  clearTimeout(timer);
+  assert.equal(code, 2, `expected exit 2 at startup, stderr: ${r.stderr()}`);
+  assert.ok(!r.stdout().includes(SENTINEL));
+  assert.ok(!r.stderr().includes(SENTINEL));
+  const lines = r.stderr().trimEnd().split("\n");
+  assert.equal(lines.length, 1);
+  assert.match(lines[0] ?? "", /^pulse-probe: /);
+  return lines[0] ?? "";
+}
+
+test("PULSE_PROBE_TOKEN_FILE alone: the API gets the trimmed file content as the token", async () => {
+  const auth: string[] = [];
+  const api = await fakeApi((req, res) => {
+    if (req.url === "/probe/checks") auth.push(req.headers.authorization ?? "");
+    res.setHeader("content-type", "application/json");
+    res.end("[]");
+  });
+  const r = run({
+    PULSE_PROBE_TOKEN_FILE: tokenFile("token-ok", `  ${SENTINEL}\n`),
+    PULSE_API_URL: api,
+  });
+  await until(() => auth.length > 0);
+  assert.equal(auth[0], `Bearer ${SENTINEL}`);
+  r.child.kill("SIGTERM");
+  assert.equal((await r.exit).code, 0);
+  assert.ok(!r.stdout().includes(SENTINEL));
+  assert.ok(!r.stderr().includes(SENTINEL));
+});
+
+test("both token variables exit 2 with one line naming both", async () => {
+  const line = await startupLine({
+    PULSE_PROBE_TOKEN: SENTINEL,
+    PULSE_PROBE_TOKEN_FILE: tokenFile("token-both", SENTINEL),
+  });
+  assert.equal(line, "pulse-probe: set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE");
+});
+
+test("no token variable exits 2 with one line naming both", async () => {
+  const line = await startupLine({ PULSE_PROBE_TOKEN: "  ", PULSE_PROBE_TOKEN_FILE: "" });
+  assert.equal(line, "pulse-probe: PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set");
+});
+
+test("an empty token file exits 2 with one line naming the path", async () => {
+  const path = tokenFile("token-empty", " \n\t\n");
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN_FILE: path }),
+    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: file is empty`,
+  );
+});
+
+test("a multi-line token file exits 2 without printing the content", async () => {
+  const path = tokenFile("token-lines", `${SENTINEL}\n${SENTINEL}`);
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN_FILE: path }),
+    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: must hold one line`,
+  );
+});
+
+test("a missing token file exits 2 with the path and ENOENT", async () => {
+  const path = join(dir, "no-such-file");
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN_FILE: path }),
+    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: cannot read (ENOENT)`,
+  );
+});
+
+test("a directory as token file exits 2 with the path and EISDIR", async () => {
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN_FILE: dir }),
+    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${dir}: cannot read (EISDIR)`,
+  );
+});
+
+for (const [name, content] of [
+  ["a NUL byte", Buffer.from(`${SENTINEL}\u0000x\n`)],
+  ["invalid UTF-8", Buffer.concat([Buffer.from(SENTINEL), Buffer.from([0xff, 0xfe])])],
+  [
+    "UTF-16 with a BOM and no newline",
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SENTINEL, "utf16le")]),
+  ],
+] as const) {
+  test(`a token file with ${name} exits 2 without printing the content`, async () => {
+    const api = await fakeApi((_q, res) => res.end("[]"));
+    const path = tokenFile(`token-${name.replaceAll(" ", "-")}`, content);
+    assert.equal(
+      await startupLine({ PULSE_PROBE_TOKEN_FILE: path, PULSE_API_URL: api }),
+      `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: must hold printable ASCII`,
+    );
+  });
+}
+
+test("a PULSE_PROBE_TOKEN with a non-ASCII character exits 2 without printing it", async () => {
+  const api = await fakeApi((_q, res) => res.end("[]"));
+  assert.equal(
+    await startupLine({ PULSE_PROBE_TOKEN: `${SENTINEL}\u2028x`, PULSE_API_URL: api }),
+    "pulse-probe: PULSE_PROBE_TOKEN must hold printable ASCII",
+  );
 });

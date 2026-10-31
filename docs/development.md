@@ -21,7 +21,7 @@ Replace `<token>` with the real probe token. Point `PULSE_API_URL` at a running 
 - `src/reloader.ts`: reloads the checks periodically and on request, keeps the old ones on failure.
 - `src/settings.ts`: reads the environment with the pulse-kit readers.
 - `src/metrics.ts`: the probe metrics on the pulse-kit registry.
-- `src/token.ts`: parses `PULSE_PROBE_TOKEN`.
+- `src/token.ts`: reads the token from `PULSE_PROBE_TOKEN` or `PULSE_PROBE_TOKEN_FILE` (the file reader is injected).
 - `src/scheduler.ts`: runs each check on its interval without overlap and follows check changes with `sync`.
 
 ## Checks
