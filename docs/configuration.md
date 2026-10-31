@@ -14,7 +14,7 @@ These are all the variables the code reads (`src/main.ts`).
 | `PULSE_BUFFER_MAX_RESULTS` | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                              |
 | `PULSE_BUFFER_MAX_AGE_MS`  | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400. |
 | `PULSE_LOG_LEVEL`          | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                                |
-| `PULSE_HEALTH_PORT`        | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100.                                                              |
+| `PULSE_HEALTH_PORT`        | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100; its healthcheck follows the variable.                        |
 | `PULSE_HEALTH_HOST`        | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                        |
 
 A bad value exits with code 2 and one line `pulse-probe: <message>` naming the variable. See [operation](operation.md#exit-codes).

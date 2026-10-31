@@ -33,7 +33,7 @@ Real environment variables win over all of them. A `.env` with `PULSE_PROBE_TOKE
 
 ## Docker
 
-The image is multi-stage on `oven/bun:1.4.0-alpine` (pinned by digest). It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `bun` user with `bun src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` on `/healthz` (liveness; `/readyz` reports readiness). It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` and `pulse-kit` dependencies and uses no token.
+The image is multi-stage on `oven/bun:1.4.0-alpine` (pinned by digest). It holds only the production dependencies, `package.json` and `src` (no tests, no tooling). It runs as the non-root `bun` user with `bun src/main.ts`. It sets `PULSE_HEALTH_PORT=9100` and `PULSE_HEALTH_HOST=0.0.0.0` and has a `HEALTHCHECK` that fetches `127.0.0.1:$PULSE_HEALTH_PORT/healthz` (liveness; `/readyz` reports readiness). The healthcheck reads the port at run time and uses 9100 when the variable is unset or empty. It does not support `PULSE_HEALTH_PORT=0` (ephemeral port). It has no `EXPOSE`; do not publish the port. The build needs github.com for the `pulse-contract` and `pulse-kit` dependencies and uses no token.
 
 ```sh
 docker build --tag pulse-probe:local .

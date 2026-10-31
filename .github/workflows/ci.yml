@@ -37,6 +37,40 @@ jobs:
             echo "$files"
             exit 1
           fi
+      - name: Check the healthcheck uses PULSE_HEALTH_PORT
+        run: |
+          containers=""
+          cleanup() { [ -z "$containers" ] || docker rm -f $containers > /dev/null; }
+          trap cleanup EXIT
+          fail() {
+            echo "$1"
+            docker logs "$2" || true
+            docker inspect -f '{{json .State.Health}}' "$2" || true
+            exit 1
+          }
+          wait_healthy() {
+            for _ in $(seq 1 60); do
+              status=$(docker inspect -f '{{.State.Health.Status}}' "$1")
+              case "$status" in
+                healthy) echo "$1 is healthy"; return 0 ;;
+                unhealthy) fail "$1 is unhealthy" "$1" ;;
+              esac
+              sleep 1
+            done
+            fail "$1 did not become healthy within 60 s" "$1"
+          }
+          run_probe() {
+            docker run -d -e PULSE_PROBE_TOKEN=ci-token -e PULSE_API_URL=http://127.0.0.1:9 \
+              --health-interval=2s --health-start-period=0s "$@" pulse-probe:local
+          }
+          c1=$(run_probe -e PULSE_HEALTH_PORT=9200)
+          containers="$containers $c1"
+          wait_healthy "$c1"
+          docker exec "$c1" bun -e "fetch('http://127.0.0.1:9100/healthz').then(()=>process.exit(1),()=>process.exit(0))" \
+            || fail "something listens on 9100" "$c1"
+          c2=$(run_probe)
+          containers="$containers $c2"
+          wait_healthy "$c2"
   release:
     if: github.ref_type == 'tag'
     needs: [check, docker]
