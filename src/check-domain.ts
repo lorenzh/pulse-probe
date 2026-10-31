@@ -1,4 +1,5 @@
 import type { DomainCheck } from "@lorenzh/pulse-contract";
+import { isRecord } from "@lorenzh/pulse-kit";
 import { type Attempt, attemptSignal, DAY_MS, errorCode, isTimeoutError } from "./attempt.ts";
 
 export const RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json";
@@ -68,10 +69,6 @@ async function readJson(res: Response, maxBytes: number): Promise<unknown> {
   } catch {
     throw new RdapError("invalid RDAP answer");
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The host of an https service URL, or `undefined` for any other entry. */

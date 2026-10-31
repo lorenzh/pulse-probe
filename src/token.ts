@@ -1,7 +1,6 @@
-import { type Env, readString, StartupError } from "@lorenzh/pulse-kit";
+import { type Env, readSecretFile, readString, StartupError } from "@lorenzh/pulse-kit";
 
 const FILE_VAR = "PULSE_PROBE_TOKEN_FILE";
-const FS_CODE = /^E[A-Z0-9]+$/;
 // fetch rejects other header bytes and echoes the whole value in its error, which the client logs.
 const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
 
@@ -24,27 +23,10 @@ function tokenSource(env: Env): TokenSource {
   throw new StartupError("PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set");
 }
 
-function fsCode(err: unknown): string | undefined {
-  if (typeof err !== "object" || err === null || !Object.hasOwn(err, "code")) return undefined;
-  const code: unknown = Object.getOwnPropertyDescriptor(err, "code")?.value;
-  return typeof code === "string" && FS_CODE.test(code) ? code : undefined;
-}
-
 function readTokenFile(path: string, readFile: (path: string) => string): string {
-  let content: string;
-  try {
-    content = readFile(path);
-  } catch (err) {
-    // Only the code: the raw fs message may carry more than the path.
-    const code = fsCode(err);
-    const suffix = code === undefined ? "" : ` (${code})`;
-    throw new StartupError(`${FILE_VAR}=${path}: cannot read${suffix}`, { cause: err });
-  }
-  const token = content.trim();
-  if (token === "") throw new StartupError(`${FILE_VAR}=${path}: file is empty`);
-  if (/[\r\n]/.test(token)) throw new StartupError(`${FILE_VAR}=${path}: must hold one line`);
+  const token = readSecretFile(path, { setting: FILE_VAR, readFile });
   if (!PRINTABLE_ASCII.test(token)) {
-    throw new StartupError(`${FILE_VAR}=${path}: must hold printable ASCII`);
+    throw new StartupError(`${FILE_VAR}=${path}: must hold printable ASCII`, { setting: FILE_VAR });
   }
   return token;
 }

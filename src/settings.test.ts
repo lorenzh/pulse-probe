@@ -110,3 +110,12 @@ for (const [label, env, readFile, expected] of [
     );
   });
 }
+
+test("PULSE_BUFFER_MAX_RESULTS above 2147483647 names the count limit", () => {
+  assert.throws(
+    () => load({ ...good, PULSE_BUFFER_MAX_RESULTS: "2147483648" }),
+    (err: unknown) =>
+      err instanceof StartupError &&
+      err.message === "PULSE_BUFFER_MAX_RESULTS: must be a positive integer up to 2147483647",
+  );
+});
