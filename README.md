@@ -22,6 +22,15 @@ docker build --tag pulse-probe:local .
 docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN='<token>' pulse-probe:local
 ```
 
+Released images are on `ghcr.io/lorenzh/pulse-probe` (linux/amd64 and linux/arm64, tags `X.Y.Z`, `X.Y` and `X`, no `latest`):
+
+```sh
+docker pull ghcr.io/lorenzh/pulse-probe:0.1.0
+docker run --rm -e PULSE_API_URL=http://host.docker.internal:3000 -e PULSE_PROBE_TOKEN='<token>' ghcr.io/lorenzh/pulse-probe:0.1.0
+```
+
+Pin a version by digest in a setup. How releases are made and verified: [releasing](docs/development.md#releasing).
+
 Replace `<token>` with the real probe token. `PULSE_PROBE_TOKEN_FILE` can replace `PULSE_PROBE_TOKEN` and point at a file that holds the token: see [probe token](docs/configuration.md#probe-token) and [token from a file (Compose secrets)](docs/install.md#token-from-a-file-compose-secrets).
 
 Checks reach whatever the probe's network reaches, internal addresses included: see [network reach of checks](docs/configuration.md#network-reach-of-checks).
