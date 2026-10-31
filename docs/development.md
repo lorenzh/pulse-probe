@@ -42,3 +42,35 @@ bun test src/check.test.ts
 ## Hooks and CI
 
 `bun install --frozen-lockfile` installs a Lefthook pre-commit hook that runs `biome check` and ESLint (SonarJS) on the staged files. CI runs the same steps as `bun run check` through the shared workflow in `lorenzh/pulse-config`, which also holds the shared Biome, TypeScript, Lefthook and ESLint configuration. Change a rule there, not here.
+
+CI (`.github/workflows/ci.yml`) has three jobs:
+
+- `check`: lint, typecheck and tests through the shared `check.yml`.
+- `docker`: builds the image and checks that it holds no test files. It runs twice, natively on `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64). `fail-fast` is off, so one failing leg keeps the other leg's log.
+- `release`: runs only on a tag and calls the shared `release.yml`. See [Releasing](#releasing).
+
+The `check.yml` ref, the `release.yml` ref and `@lorenzh/pulse-config` in `package.json` (with `bun.lock`) carry the same SHA. Change them together.
+
+## Releasing
+
+A person releases the probe by pushing a SemVer tag:
+
+```sh
+git tag vX.Y.Z <sha on main> && git push origin vX.Y.Z
+```
+
+- The tag must match `vX.Y.Z` or `vX.Y.Z-<pre-release>` (no leading zeros, no `+build`). Any other tag fails the release before anything is built.
+- A stable tag `vX.Y.Z` must point to a commit on `main`. A pre-release tag may point anywhere, for example to a test branch.
+- The tag run executes the same gate as `main`: `check` and both `docker` legs (amd64 and arm64). The `release` job runs only when all of them pass. A failed, cancelled or skipped gate skips it.
+- The release publishes a multi-arch image (linux/amd64, linux/arm64) to `ghcr.io/lorenzh/pulse-probe` with the tags `X.Y.Z`, `X.Y` and `X`. `X.Y` and `X` move only forward to the highest stable tag; a pre-release gets only its own tag. There is no `latest` and no `edge` tag. A push to `main` or a pull request publishes nothing.
+- The version comes from the git tag. `package.json` `version` stays `0.0.0`.
+- Never move or re-push a release tag. The workflow refuses to publish a version that already exists; push a new version instead.
+- The release builds the image again from the tagged commit, so its digest can differ from the image that the gate checked.
+
+Verify the build provenance of a release:
+
+```sh
+gh attestation verify oci://ghcr.io/lorenzh/pulse-probe:<version> --owner lorenzh
+```
+
+Setups pin an exact version by digest (`ghcr.io/lorenzh/pulse-probe:X.Y.Z@sha256:<digest>`), because `X` moves across breaking 0.x minors. Tag rules, owner steps (package visibility, cleanup of test tags) and the workflow itself are documented in [pulse-config](https://github.com/lorenzh/pulse-config#releasing-images).
