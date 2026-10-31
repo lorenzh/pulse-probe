@@ -177,3 +177,30 @@ test("a token with an inner space and all printable ASCII is accepted", () => {
   assert.equal(readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, reader(token).read), token);
   assert.equal(readProbeToken({ PULSE_PROBE_TOKEN: token }, reader("x").read), token);
 });
+
+function fileError(content: string | Error): StartupError {
+  const read = (): string => {
+    if (content instanceof Error) throw content;
+    return content;
+  };
+  try {
+    readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/t" }, read);
+  } catch (err) {
+    assert.ok(err instanceof StartupError, "expected a StartupError");
+    return err;
+  }
+  assert.fail("expected a throw");
+}
+
+for (const [what, content] of [
+  ["a read error", new FakeFsError("secret-sentinel", "ENOENT")],
+  ["an empty file", " \n"],
+  ["a multi-line file", "secret-sentinel\nx"],
+  ["a non-printable file", "secret-sentinel\tx"],
+] as const) {
+  test(`token file error for ${what} carries the setting and no content`, () => {
+    const err = fileError(content);
+    assert.equal(err.setting, "PULSE_PROBE_TOKEN_FILE");
+    assert.ok(!err.message.includes("secret-sentinel"));
+  });
+}

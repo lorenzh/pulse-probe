@@ -7,6 +7,7 @@ import type {
   Result,
   TlsCheck,
 } from "@lorenzh/pulse-contract";
+import { isRecord } from "@lorenzh/pulse-kit";
 import { type Attempt, DAY_MS, errorCode, errorReason } from "./attempt.ts";
 import { attemptDns, type Resolve, resolveRecords } from "./check-dns.ts";
 import { attemptDomain } from "./check-domain.ts";
@@ -232,10 +233,6 @@ function matchesStatus(code: number, expected: ExpectedStatus[]): boolean {
     const [lo, hi] = entry.split("-").map(Number);
     return lo !== undefined && hi !== undefined && code >= lo && code <= hi;
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Resolves an RFC 6901 pointer; `undefined` means the pointer does not resolve. */
