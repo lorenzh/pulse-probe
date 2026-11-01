@@ -71,6 +71,10 @@ Action: check that the API is reachable from the probe. Watch `pulse_probe_buffe
 Cause: the probe cannot reach the target from where it runs, or the target is slower than `timeoutMs` (default 5000 ms).
 Action: test the URL from the probe's host. Raise `timeoutMs` in the API's checks file if needed.
 
+## A check is `down` with `blocked: <category> address (PULSE_PROBE_BLOCK_PRIVATE_RANGES)`
+
+`PULSE_PROBE_BLOCK_PRIVATE_RANGES` is on, and the check's host (or one of its DNS answers, or a redirect target with `redirect blocked:`) is in a blocked range. Point the check at a public address, run it from a probe with the setting off, or turn the setting off. See [blocking private ranges](configuration.md#blocking-private-ranges).
+
 ## New or changed checks do not run
 
 Cause: the API reads its checks file at startup, and the probe reloads every `PULSE_CHECKS_RELOAD_MS` (default 60 s).

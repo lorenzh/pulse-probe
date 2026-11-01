@@ -1,5 +1,6 @@
 import type { DomainCheck } from "@lorenzh/pulse-contract";
-import { isRecord } from "@lorenzh/pulse-kit";
+import { BlockedAddressError, isRecord } from "@lorenzh/pulse-kit";
+import { blockedReason } from "./address-policy.ts";
 import { type Attempt, attemptSignal, DAY_MS, errorCode, isTimeoutError } from "./attempt.ts";
 
 export const RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json";
@@ -183,6 +184,27 @@ function redirectTarget(location: string, base: string, hosts: Set<string>): str
   return target.href;
 }
 
+/** One RDAP request. A blocked redirect hop becomes an `RdapError` with its reason. */
+async function rdapHop(
+  target: string,
+  hops: number,
+  deps: DomainDeps,
+  signal: AbortSignal,
+): Promise<Response> {
+  try {
+    return await deps.fetch(target, {
+      signal,
+      redirect: "manual",
+      headers: { accept: "application/rdap+json" },
+    });
+  } catch (err) {
+    if (hops > 0 && err instanceof BlockedAddressError) {
+      throw new RdapError(blockedReason(err.category, true), { cause: err });
+    }
+    throw err;
+  }
+}
+
 async function fetchRdap(
   url: string,
   hosts: Set<string>,
@@ -191,11 +213,7 @@ async function fetchRdap(
 ): Promise<unknown> {
   let target = url;
   for (let hops = 0; ; hops++) {
-    const res = await deps.fetch(target, {
-      signal,
-      redirect: "manual",
-      headers: { accept: "application/rdap+json" },
-    });
+    const res = await rdapHop(target, hops, deps, signal);
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location !== null) {
       await res.body?.cancel().catch(() => {});
@@ -262,7 +280,12 @@ export async function attemptDomain(
     if (isTimeoutError(err)) {
       return { status: "down", reason: `timeout after ${timeoutMs}ms`, certDaysLeft: null };
     }
-    const reason = err instanceof RdapError ? err.message : (errorCode(err) ?? "request error");
-    return { status: "down", reason, certDaysLeft: null };
+    return { status: "down", reason: domainFailure(err), certDaysLeft: null };
   }
+}
+
+function domainFailure(err: unknown): string {
+  if (err instanceof RdapError) return err.message;
+  if (err instanceof BlockedAddressError) return blockedReason(err.category, false);
+  return errorCode(err) ?? "request error";
 }

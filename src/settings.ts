@@ -1,6 +1,7 @@
 import {
   type Env,
   type LogLevel,
+  readBool,
   readInt,
   readLogLevel,
   readMs,
@@ -35,6 +36,8 @@ export interface Settings {
   bufferMaxAgeMs: number;
   logLevel: LogLevel;
   health: HealthSettings | undefined;
+  /** Checks may not connect to private, loopback, link-local or metadata addresses. */
+  blockPrivateRanges: boolean;
 }
 
 function readHealth(env: Env): HealthSettings | undefined {
@@ -76,6 +79,7 @@ export function loadSettings(env: Env, readFile: (path: string) => string): Sett
       }),
       logLevel: readLogLevel(env),
       health: readHealth(env),
+      blockPrivateRanges: readBool(env, "PULSE_PROBE_BLOCK_PRIVATE_RANGES", false),
     };
   } catch (err) {
     if (err instanceof StartupError) throw err;

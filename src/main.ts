@@ -4,6 +4,7 @@ import type { Result } from "@lorenzh/pulse-contract";
 import {
   createLogger,
   type Logger,
+  lookupAll,
   type OpsServer,
   type Readiness,
   runService,
@@ -11,7 +12,11 @@ import {
   startOpsServer,
 } from "@lorenzh/pulse-kit";
 import { createResultBuffer } from "./buffer.ts";
-import { startCheckScheduler } from "./check-scheduler.ts";
+import { tlsConnect } from "./check.ts";
+import { resolveRecords } from "./check-dns.ts";
+import { createCheckGuard } from "./check-guard.ts";
+import { type CheckSchedulerDeps, startCheckScheduler } from "./check-scheduler.ts";
+import { tcpConnect } from "./check-tcp.ts";
 import type { ProbeCheck } from "./client.ts";
 import {
   fetchChecks,
@@ -104,6 +109,22 @@ async function startHealth(
   logger.info("health listener started", { host, port: health.port });
 }
 
+type CheckTransports = Pick<CheckSchedulerDeps, "fetch" | "tcpConnect" | "tlsConnect" | "resolve">;
+
+/** The transports of the checks. API traffic never goes through them. */
+function checkTransports(settings: Settings): CheckTransports {
+  if (!settings.blockPrivateRanges) return { fetch };
+  logger.info("blocking check connections to private addresses (PULSE_PROBE_BLOCK_PRIVATE_RANGES)");
+  return createCheckGuard({
+    fetch,
+    lookup: lookupAll,
+    tcpConnect,
+    tlsConnect,
+    resolve: resolveRecords,
+    monotonic,
+  });
+}
+
 async function runChecks(settings: Settings, metrics: Metrics, onReady: () => void): Promise<void> {
   const log = (message: string): void => logger.warn(message);
   const abortableSleep = (ms: number): Promise<void> =>
@@ -192,7 +213,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
 
   const scheduler = startCheckScheduler(checks, {
     timer,
-    fetch,
+    ...checkTransports(settings),
     sleep: abortableSleep,
     location: settings.location,
     signal: shutdown.signal,

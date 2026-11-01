@@ -7,6 +7,10 @@ import { type Scheduler, startScheduler, type Timer } from "./scheduler.ts";
 export interface CheckSchedulerDeps {
   timer: Timer;
   fetch: CheckDeps["fetch"];
+  /** Guarded transports when the private-range policy is on; the defaults otherwise. */
+  tcpConnect?: CheckDeps["tcpConnect"];
+  tlsConnect?: CheckDeps["tlsConnect"];
+  resolve?: CheckDeps["resolve"];
   sleep: CheckDeps["sleep"];
   location: string;
   signal: AbortSignal;
@@ -33,6 +37,9 @@ export function startCheckScheduler(checks: ProbeCheck[], deps: CheckSchedulerDe
           sleep: deps.sleep,
           location: deps.location,
           signal: deps.signal,
+          ...(deps.tcpConnect !== undefined ? { tcpConnect: deps.tcpConnect } : {}),
+          ...(deps.tlsConnect !== undefined ? { tlsConnect: deps.tlsConnect } : {}),
+          ...(deps.resolve !== undefined ? { resolve: deps.resolve } : {}),
         }),
       ),
     onResult: (result) => deps.track(deps.onResult(result)),

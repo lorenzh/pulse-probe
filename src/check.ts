@@ -7,7 +7,8 @@ import type {
   Result,
   TlsCheck,
 } from "@lorenzh/pulse-contract";
-import { isRecord } from "@lorenzh/pulse-kit";
+import { BlockedAddressError, isRecord } from "@lorenzh/pulse-kit";
+import { blockedReason } from "./address-policy.ts";
 import { type Attempt, DAY_MS, errorCode, errorReason } from "./attempt.ts";
 import { attemptDns, type Resolve, resolveRecords } from "./check-dns.ts";
 import { attemptDomain } from "./check-domain.ts";
@@ -29,6 +30,8 @@ export interface TlsConnectOptions {
   host: string;
   port: number;
   timeoutMs: number;
+  /** SNI name. Defaults to `host` when it is not an IP literal. */
+  servername?: string;
 }
 
 /** Connects, completes the handshake and returns the leaf certificate's `valid_to` (epoch ms). */
@@ -38,13 +41,13 @@ export type TlsConnect = (options: TlsConnectOptions) => Promise<{ validTo: numb
  * Reads the leaf certificate of a TLS endpoint. The chain and the hostname are not
  * verified (`rejectUnauthorized: false`); `timeoutMs` bounds connect plus handshake.
  */
-export const tlsConnect: TlsConnect = ({ host, port, timeoutMs }) =>
+export const tlsConnect: TlsConnect = ({ host, port, timeoutMs, servername }) =>
   new Promise((resolve, reject) => {
     const signal = AbortSignal.timeout(timeoutMs);
     const socket = tls.connect({
       host,
       port,
-      ...(isIP(host) === 0 ? { servername: host } : {}),
+      ...tlsServername(host, servername),
       rejectUnauthorized: false,
     });
     const onAbort = (): void => {
@@ -66,6 +69,11 @@ export const tlsConnect: TlsConnect = ({ host, port, timeoutMs }) =>
       reject(err);
     });
   });
+
+function tlsServername(host: string, servername: string | undefined): { servername?: string } {
+  if (servername !== undefined) return { servername };
+  return isIP(host) === 0 ? { servername: host } : {};
+}
 
 export interface CheckDeps {
   fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -388,16 +396,13 @@ async function fetchFollowing(
   const isSecret = isSecretBearing(check);
   let url = check.url;
   let current = method;
+  let lastStatus: number | null = null;
   for (let hops = 0; ; hops++) {
-    const res = await deps.fetch(url, {
-      method: current,
-      redirect: "manual",
-      // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
-      headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
-      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
-      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
-      signal,
-    });
+    const sent = await sendHop(check, deps, url, current, signal);
+    if (sent instanceof BlockedAddressError) {
+      return { stop: { statusCode: lastStatus, reason: blockedReason(sent.category, hops > 0) } };
+    }
+    const res = sent;
     const location = res.headers.get("location");
     if (
       !REDIRECT_STATUSES.includes(res.status) ||
@@ -414,6 +419,31 @@ async function fetchFollowing(
     if ("reason" in next) return { stop: { statusCode: res.status, reason: next.reason } };
     url = next.url;
     current = next.method;
+    lastStatus = res.status;
+  }
+}
+
+/** One request without redirects; a blocked target comes back as its error, not a throw. */
+async function sendHop(
+  check: HttpLikeCheck,
+  deps: CheckDeps,
+  url: string,
+  method: string,
+  signal: AbortSignal,
+): Promise<Response | BlockedAddressError> {
+  try {
+    return await deps.fetch(url, {
+      method,
+      redirect: "manual",
+      // The probe's user-agent goes last: the contract forbids the header, and it must win anyway.
+      headers: { ...resolvedHeaders(check), "user-agent": userAgent(deps.location) },
+      // Bytes, not a string: fetch would add `content-type: text/plain` to a string body.
+      ...(check.body !== undefined ? { body: new TextEncoder().encode(check.body) } : {}),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof BlockedAddressError) return err;
+    throw err;
   }
 }
 
@@ -493,6 +523,9 @@ async function runTlsCheck(
   } catch (err) {
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       return finish("down", null, `timeout after ${timeoutMs}ms`, null);
+    }
+    if (err instanceof BlockedAddressError) {
+      return finish("down", null, blockedReason(err.category, false), null);
     }
     return finish("down", null, errorReason(err), null);
   }
