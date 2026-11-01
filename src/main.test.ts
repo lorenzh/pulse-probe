@@ -54,8 +54,8 @@ function run(env: Record<string, string>): Run {
   return { child, stdout: () => out, stderr: () => err, exit };
 }
 
-async function until(cond: () => boolean): Promise<void> {
-  const deadline = Date.now() + 10_000;
+async function until(cond: () => boolean, waitMs = 10_000): Promise<void> {
+  const deadline = Date.now() + waitMs;
   while (!cond()) {
     assert.ok(Date.now() < deadline, "timed out waiting");
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -69,6 +69,10 @@ for (const [name, env] of [
   ["PULSE_CHECKS_RELOAD_MS", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_CHECKS_RELOAD_MS: "1" }],
   ["PULSE_LOG_LEVEL", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_LOG_LEVEL: "loud" }],
   ["PULSE_HEALTH_PORT", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_HEALTH_PORT: "abc" }],
+  [
+    "PULSE_PROBE_BLOCK_PRIVATE_RANGES",
+    { PULSE_PROBE_TOKEN: "tok-secret", PULSE_PROBE_BLOCK_PRIVATE_RANGES: "yes" },
+  ],
 ] as const) {
   test(`a bad ${name} exits 2 with one line and no stack`, async () => {
     const r = run(env);
@@ -285,3 +289,83 @@ test("a PULSE_PROBE_TOKEN with a non-ASCII character exits 2 without printing it
     "pulse-probe: PULSE_PROBE_TOKEN must hold printable ASCII",
   );
 });
+
+test(
+  "with PULSE_PROBE_BLOCK_PRIVATE_RANGES=true checks to loopback are blocked, API calls are not",
+  async () => {
+    let targetHits = 0;
+    let targetConnections = 0;
+    const target = http.createServer((_q, res) => {
+      targetHits++;
+      res.end("ok");
+    });
+    target.on("connection", () => targetConnections++);
+    servers.push(target);
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    const port = (target.address() as AddressInfo).port;
+    const httpCheck = {
+      id: "web",
+      name: "Web",
+      url: `http://127.0.0.1:${port}/?secret=e2e-sentinel`,
+      intervalMs: 60_000,
+    };
+    const tcpCheck = {
+      id: "port",
+      name: "Port",
+      type: "tcp",
+      host: "127.0.0.1",
+      port,
+      intervalMs: 60_000,
+    };
+    let loads = 0;
+    const posted: { checkId: string; status: string; reason: string | null }[] = [];
+    const api = await fakeApi((req, res) => {
+      if (req.url === "/probe/checks") {
+        loads++;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(loads === 1 ? [httpCheck] : [httpCheck, tcpCheck]));
+        return;
+      }
+      let body = "";
+      req.on("data", (d: Buffer) => {
+        body += d.toString();
+      });
+      req.on("end", () => {
+        posted.push(JSON.parse(body) as (typeof posted)[number]);
+        res.statusCode = 204;
+        res.end();
+      });
+    });
+    const r = run({
+      PULSE_PROBE_TOKEN: "tok-secret",
+      PULSE_API_URL: api,
+      PULSE_PROBE_BLOCK_PRIVATE_RANGES: "true",
+      PULSE_CHECKS_RELOAD_MS: "5000",
+    });
+    try {
+      await until(() => posted.some((p) => p.checkId === "web"));
+      await until(() => posted.some((p) => p.checkId === "port"), 15_000);
+    } finally {
+      r.child.kill("SIGTERM");
+    }
+    assert.equal((await r.exit).code, 0);
+    const reason = "blocked: loopback address (PULSE_PROBE_BLOCK_PRIVATE_RANGES)";
+    for (const id of ["web", "port"]) {
+      const result = posted.find((p) => p.checkId === id);
+      assert.equal(result?.status, "down");
+      assert.equal(result?.reason, reason);
+    }
+    assert.equal(targetHits, 0);
+    assert.equal(targetConnections, 0);
+    assert.ok(!r.stdout().includes("e2e-sentinel"));
+    assert.ok(!r.stderr().includes("e2e-sentinel"));
+    assert.ok(
+      r
+        .stdout()
+        .includes(
+          "blocking check connections to private addresses (PULSE_PROBE_BLOCK_PRIVATE_RANGES)",
+        ),
+    );
+  },
+  { timeout: 20_000 },
+);

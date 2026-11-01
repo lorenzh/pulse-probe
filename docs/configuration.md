@@ -4,18 +4,19 @@
 
 These are all the variables the code reads (`src/main.ts`).
 
-| Variable                   | Default                 | Meaning                                                                                                                                                |
-| -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PULSE_API_URL`            | `http://localhost:3000` | Base URL of pulse-api. Must be an http(s) URL without credentials, query or fragment; empty or invalid exits 2. The trailing slash is removed.         |
-| `PULSE_LOCATION`           | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).                                                                        |
-| `PULSE_PROBE_TOKEN`        | none                    | Secret token that authorizes this probe to post results to pulse-api. Required unless `PULSE_PROBE_TOKEN_FILE` is set.                                 |
-| `PULSE_PROBE_TOKEN_FILE`   | unset                   | File whose trimmed content is the token. Set exactly one of `PULSE_PROBE_TOKEN` and `PULSE_PROBE_TOKEN_FILE`; see [probe token](#probe-token).         |
-| `PULSE_CHECKS_RELOAD_MS`   | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                             |
-| `PULSE_BUFFER_MAX_RESULTS` | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                              |
-| `PULSE_BUFFER_MAX_AGE_MS`  | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400. |
-| `PULSE_LOG_LEVEL`          | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                                |
-| `PULSE_HEALTH_PORT`        | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100; its healthcheck follows the variable.                        |
-| `PULSE_HEALTH_HOST`        | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                        |
+| Variable                           | Default                 | Meaning                                                                                                                                                                                                                                                     |
+| ---------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PULSE_API_URL`                    | `http://localhost:3000` | Base URL of pulse-api. Must be an http(s) URL without credentials, query or fragment; empty or invalid exits 2. The trailing slash is removed.                                                                                                              |
+| `PULSE_LOCATION`                   | `default`               | Name of this probe's location (trimmed, case-sensitive, at most 64 characters).                                                                                                                                                                             |
+| `PULSE_PROBE_TOKEN`                | none                    | Secret token that authorizes this probe to post results to pulse-api. Required unless `PULSE_PROBE_TOKEN_FILE` is set.                                                                                                                                      |
+| `PULSE_PROBE_TOKEN_FILE`           | unset                   | File whose trimmed content is the token. Set exactly one of `PULSE_PROBE_TOKEN` and `PULSE_PROBE_TOKEN_FILE`; see [probe token](#probe-token).                                                                                                              |
+| `PULSE_CHECKS_RELOAD_MS`           | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                                                                                                                                  |
+| `PULSE_BUFFER_MAX_RESULTS`         | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                                                                                                                                   |
+| `PULSE_BUFFER_MAX_AGE_MS`          | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400.                                                                                                      |
+| `PULSE_LOG_LEVEL`                  | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                                                                                                                                     |
+| `PULSE_HEALTH_PORT`                | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100; its healthcheck follows the variable.                                                                                                                             |
+| `PULSE_HEALTH_HOST`                | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                                                                                                                             |
+| `PULSE_PROBE_BLOCK_PRIVATE_RANGES` | `false`                 | `true` or `1` stops checks from connecting to private, loopback, link-local, unspecified, reserved and cloud metadata addresses. `false`, `0`, unset or empty allow them. Any other value exits 2. See [blocking private ranges](#blocking-private-ranges). |
 
 A bad value exits with code 2 and one line `pulse-probe: <message>` naming the variable. See [operation](operation.md#exit-codes).
 
@@ -200,12 +201,54 @@ DNS checks can query any `resolver` address. In the container, loopback is the c
 
 TCP reasons tell `connection refused` from `timeout`, and HTTP checks report status codes. So whoever can edit checks (the API checks file, or the admin config routes of pulse-api) can use probes to scan ports and services in the probe's network. Treat check editors as trusted with the probe's network reach.
 
-There is no deny list in the code. To limit the reach:
+To limit the reach:
 
+- Set `PULSE_PROBE_BLOCK_PRIVATE_RANGES=true` (see below).
 - Run probes in a network without access to internal services they do not monitor.
-- Restrict egress with firewall rules. Block `169.254.169.254` and internal ranges unless a check needs them.
+- Restrict egress with firewall rules.
 - Use one dedicated probe (location) per internal zone you want to monitor.
 - Keep the admin tokens and the checks file to the people who may do this.
+
+### Blocking private ranges
+
+`PULSE_PROBE_BLOCK_PRIVATE_RANGES` is off by default. `true` or `1` turns it on; `false`, `0`, unset or empty leave it off. The value is trimmed; other spellings (`TRUE`, `yes`, `on`) exit 2 with `pulse-probe: PULSE_PROBE_BLOCK_PRIVATE_RANGES: must be true, false, 1 or 0`. The probe reads it once at startup, so a change needs a restart. It applies to every check, also to checks added by a reload. When it is on, the probe logs `blocking check connections to private addresses (PULSE_PROBE_BLOCK_PRIVATE_RANGES)` at startup.
+
+When it is on, a check resolves the host name itself, checks every address of the answer, and connects only to a checked address. The `Host` header, the TLS server name (SNI) and the certificate check keep the name. If any address of the answer is blocked, the whole target is blocked. These addresses are blocked; the first matching category names the reason:
+
+| Category      | IPv4                                                             | IPv6                      |
+| ------------- | ---------------------------------------------------------------- | ------------------------- |
+| `metadata`    | `169.254.169.254`, `100.100.100.200`, `168.63.129.16`            | `fd00:ec2::254`           |
+| `unspecified` | `0.0.0.0/8`                                                      | `::`                      |
+| `loopback`    | `127.0.0.0/8`                                                    | `::1`                     |
+| `link-local`  | `169.254.0.0/16`                                                 | `fe80::/10`               |
+| `private`     | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` | `fc00::/7`, `fec0::/10`   |
+| `reserved`    |                                                                  | `::/96` (IPv4-compatible) |
+
+IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`) count as their IPv4 address. Other spellings of IPv4 in URLs (`2130706433`, `0x7f.1`, `127.1`) are normalized first. An answer that is not an IP address is blocked as `unrecognized`.
+
+Not blocked: multicast (`224.0.0.0/4`, `ff00::/8`), `240.0.0.0/4`, the documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`), `198.18.0.0/15`, `192.0.0.0/24`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` and Teredo `2001::/32`.
+
+What each check type checks:
+
+- HTTP: the URL and every redirect hop the probe follows. Each hop is resolved again.
+- TLS and TCP: the `host` of the connection.
+- DNS: an explicit `resolver` address, before the query. The system resolver, the queried name and the answers are not checked. An `A` record with a private address is data, not a connection.
+- Domain: the RDAP bootstrap URL, the RDAP service URL and each RDAP redirect hop.
+- Heartbeat: nothing; it opens no connection.
+
+Not affected: the connection to pulse-api (checks, results, buffer), the system DNS resolver and the health listener. `HTTP_PROXY` and `HTTPS_PROXY` still apply to HTTP checks; the proxy receives the checked IP address as the target, so `NO_PROXY` entries that name hosts no longer match.
+
+A blocked check is `down` with the reason `blocked: <category> address (PULSE_PROBE_BLOCK_PRIVATE_RANGES)`, or `redirect blocked: <category> address (PULSE_PROBE_BLOCK_PRIVATE_RANGES)` for an HTTP or RDAP redirect hop. The reason names no host, address or URL. `statusCode` is `null`, except for a blocked HTTP redirect hop, where it is the status of the redirect answer. Retries run as usual and are blocked again.
+
+Known limits:
+
+- Bun cannot pick among the addresses itself. The probe tries the next address only when a connection is refused or unreachable. A host whose first address times out can be reported down.
+- Each attempt runs one system lookup, outside Bun's DNS cache. A slow resolver holds a thread until it times out (see `/etc/resolv.conf`).
+- A failed name gives the lookup code (`ENOTFOUND`) as the reason.
+- Azure DNS at `168.63.129.16` as an explicit DNS check `resolver` is blocked.
+- A metadata service on another address is blocked only when it falls in a range above.
+
+Provider references for the metadata addresses: [AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html), [Azure IMDS](https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service), [Azure 168.63.129.16](https://learn.microsoft.com/azure/virtual-network/what-is-ip-address-168-63-129-16), [Google Cloud](https://cloud.google.com/compute/docs/metadata/querying-metadata), [Oracle Cloud](https://docs.oracle.com/iaas/Content/Compute/Tasks/gettingmetadata.htm), [Alibaba Cloud](https://www.alibabacloud.com/help/ecs/user-guide/view-instance-metadata).
 
 ## Migration
 

@@ -119,3 +119,29 @@ test("PULSE_BUFFER_MAX_RESULTS above 2147483647 names the count limit", () => {
       err.message === "PULSE_BUFFER_MAX_RESULTS: must be a positive integer up to 2147483647",
   );
 });
+
+for (const [value, expected] of [
+  ["true", true],
+  ["1", true],
+  [" true ", true],
+  ["false", false],
+  ["0", false],
+  ["", false],
+  [undefined, false],
+] as const) {
+  test(`PULSE_PROBE_BLOCK_PRIVATE_RANGES=${JSON.stringify(value)} gives ${expected}`, () => {
+    const env = value === undefined ? good : { ...good, PULSE_PROBE_BLOCK_PRIVATE_RANGES: value };
+    assert.equal(load(env).blockPrivateRanges, expected);
+  });
+}
+
+for (const value of ["TRUE", "yes", "on", "2"]) {
+  test(`PULSE_PROBE_BLOCK_PRIVATE_RANGES=${value} is a StartupError`, () => {
+    assert.throws(
+      () => load({ ...good, PULSE_PROBE_BLOCK_PRIVATE_RANGES: value }),
+      (err: unknown) =>
+        err instanceof StartupError &&
+        err.message === "PULSE_PROBE_BLOCK_PRIVATE_RANGES: must be true, false, 1 or 0",
+    );
+  });
+}

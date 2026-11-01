@@ -28,6 +28,6 @@
   },
   "dependencies": {
     "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#ebcbbb613328494185833f7133f1242910986948",
-    "@lorenzh/pulse-kit": "github:lorenzh/pulse-kit#236df214f9df8658f2992dd6f7c100952c07102b"
+    "@lorenzh/pulse-kit": "github:lorenzh/pulse-kit#739188a87a177c0e8b5a8938e3f54c2bdaf19df4"
   }
 }

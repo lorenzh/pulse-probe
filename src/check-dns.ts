@@ -1,5 +1,7 @@
 import { Resolver } from "node:dns/promises";
 import type { DnsCheck, DnsRecordType } from "@lorenzh/pulse-contract";
+import { BlockedAddressError } from "@lorenzh/pulse-kit";
+import { blockedReason } from "./address-policy.ts";
 import { type Attempt, attemptSignal, errorCode, errorReason, isTimeoutError } from "./attempt.ts";
 
 export interface ResolveOptions {
@@ -128,6 +130,7 @@ function noData(check: DnsCheck): Attempt {
 
 function failureReason(check: DnsCheck, err: unknown, timeoutMs: number): string {
   if (isTimeoutError(err)) return `timeout after ${timeoutMs}ms`;
+  if (err instanceof BlockedAddressError) return blockedReason(err.category, false);
   const code = errorCode(err);
   if (code === "ETIMEOUT" || code === "ECANCELLED") return `timeout after ${timeoutMs}ms`;
   if (code === "ENOTFOUND") return `NXDOMAIN: ${check.dnsName} does not exist`;

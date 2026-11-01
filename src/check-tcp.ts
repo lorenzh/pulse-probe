@@ -1,5 +1,7 @@
 import { connect } from "node:net";
 import type { TcpCheck } from "@lorenzh/pulse-contract";
+import { BlockedAddressError } from "@lorenzh/pulse-kit";
+import { blockedReason } from "./address-policy.ts";
 import { type Attempt, attemptSignal, errorCode, errorReason, isTimeoutError } from "./attempt.ts";
 
 export interface TcpConnectOptions {
@@ -46,6 +48,9 @@ export async function attemptTcp(
     return { status: "up", reason: null };
   } catch (err) {
     if (isTimeoutError(err)) return { status: "down", reason: `timeout after ${timeoutMs}ms` };
+    if (err instanceof BlockedAddressError) {
+      return { status: "down", reason: blockedReason(err.category, false) };
+    }
     const code = errorCode(err);
     if (code === "ECONNREFUSED")
       return { status: "down", reason: "connection refused (ECONNREFUSED)" };
