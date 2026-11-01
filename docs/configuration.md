@@ -17,6 +17,7 @@ These are all the variables the code reads (`src/main.ts`).
 | `PULSE_HEALTH_PORT`                | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100; its healthcheck follows the variable.                                                                                                                             |
 | `PULSE_HEALTH_HOST`                | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                                                                                                                             |
 | `PULSE_PROBE_BLOCK_PRIVATE_RANGES` | `false`                 | `true` or `1` stops checks from connecting to private, loopback, link-local, unspecified, reserved and cloud metadata addresses. `false`, `0`, unset or empty allow them. Any other value exits 2. See [blocking private ranges](#blocking-private-ranges). |
+| `PULSE_PROBE_HEADER_HOSTS`         | unset (no bindings)     | JSON object of `PULSE_HEADER_*` names to the hosts each may be sent to. Read once at start. Unset or empty binds no variable to any host. A malformed value exits 2. See [header host bindings](#header-host-bindings).                                     |
 
 A bad value exits with code 2 and one line `pulse-probe: <message>` naming the variable. See [operation](operation.md#exit-codes).
 
@@ -97,6 +98,7 @@ With `keyword` set, a 2xx answer is `up` only when its body contains the keyword
 
 - `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`.
 - `headers`: a value is a literal string or `{ "env": "NAME" }`. `NAME` must start with `PULSE_HEADER_` (case-sensitive); the probe never reads another variable for a header. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. The variable replaces the whole header value, so a bearer token needs the scheme in the variable (`PULSE_HEADER_SVC_TOKEN="Bearer <token>"`). If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). A value that is not a valid header value (for example one with a CR, LF or TAB) skips the check with `... env NAME is not a valid header value`. A name without the prefix skips the check with `... env NAME must start with PULSE_HEADER_`. Set the variable in every probe location. Literal header values and bodies are clear text in the checks file and in the api database; use `{ "env" }` for secrets. The probe always sends its own `User-Agent`.
+- A `{ "env" }` header is sent only to a host that `PULSE_PROBE_HEADER_HOSTS` binds the variable to; see [header host bindings](#header-host-bindings).
 - `expectedStatus` accepts codes and `"lo-hi"` ranges. The final status after redirects is judged.
 - Redirects of every HTTP check: the probe follows a 301, 302, 303, 307 or 308 with a `Location`. An unparsable `Location` is `down` with `redirect to invalid location`. A target that is not `http:` or `https:` is `down` with `redirect to <scheme> not followed` (for example `redirect to file: not followed`), with the redirect status as `statusCode`, and the target gets no request. A 3xx without `Location` is the final answer.
 - Checks without headers and body follow redirects like fetch does: across origins and between http and https, also when the redirect status is in `expectedStatus`. A 303 turns any method except HEAD into GET, a 301 or 302 turns POST into GET, other methods stay. The 21st redirect answer is `down` with `too many redirects`.
@@ -186,6 +188,43 @@ HTTP, TCP, DNS and domain checks retry. `retries` is an integer 0..10 (default 0
 ### Schedule
 
 Each check runs immediately at startup and then every `intervalMs`, measured from the start of the previous run. A check never overlaps with itself: the next run is scheduled only after the previous one, including its result post, has finished. If a run takes longer than the interval, the next one starts at once.
+
+## Header host bindings
+
+`PULSE_PROBE_HEADER_HOSTS` binds each header variable to the hosts it may be sent to. It lives only in the probe environment, so an admin token on the api cannot change it. The probe reads it once at start; a change needs a restart. At start the probe logs `header host bindings for <n> variable(s)` (the count only).
+
+Format: a JSON object, at most 65536 bytes (UTF-8). Each key is a variable name matching `^PULSE_HEADER_[A-Za-z0-9_]{1,115}$`. Each value is an array of 0 to 100 host entries:
+
+```sh
+PULSE_PROBE_HEADER_HOSTS='{"PULSE_HEADER_SVC_TOKEN":["svc.example.com","10.0.0.7","[fd00::7]"]}'
+```
+
+A host entry is a host name, an IPv4 address or an IPv6 address in brackets, 1 to 253 characters. It has no scheme, port, path, userinfo, wildcard, `%` or whitespace. Entries are normalized like URL hosts: lower case, IDNs in punycode, IPv4 in dotted form (`127.1` is `127.0.0.1`), one trailing `.` removed.
+
+Matching: the host of the check URL, normalized the same way, must equal an entry of the variable exactly. There is no wildcard, suffix, subdomain or DNS match. A binding covers every port and both `http:` and `https:` on that host. With `["api.example.com"]`, `https://api.example.com/x`, `http://API.Example.COM:8443/` and `https://api.example.com./` match; `https://sub.api.example.com/`, `https://api.example.com.evil.net/` and `https://127.0.0.1/` do not. Redirects of a check with headers still stay within the origin, also when the target host is bound.
+
+A variable with no key, or with `[]`, is bound to no host. For a reference that is not bound to the check's host, the probe does not read the variable and sends no request. The check reports `down` on every run with `statusCode` `null`, `latencyMs` `0`, `attempts` `1` and the reason `header <Name> env <VAR> is not bound to host <host>`. Each load of the checks logs the warn line `check <id>: header <Name> env <VAR> is not bound to host <host>; reporting down`. Neither text holds a header value, a path, a query or userinfo. The headers are checked in their order; the first problem ends the check: prefix, binding, unset variable, invalid value.
+
+A malformed value exits 2 with one of these lines (they never print the JSON text, a key or a host):
+
+- `PULSE_PROBE_HEADER_HOSTS must be a JSON object of PULSE_HEADER_* names to host lists`
+- `PULSE_PROBE_HEADER_HOSTS must be at most 65536 bytes`
+- `PULSE_PROBE_HEADER_HOSTS: key <n> must match ^PULSE_HEADER_[A-Za-z0-9_]{1,115}$` (`<n>` counts from 1)
+- `PULSE_PROBE_HEADER_HOSTS.<VAR> must be an array of at most 100 hosts`
+- `PULSE_PROBE_HEADER_HOSTS.<VAR>[<i>] must be a host name or IP address without scheme, port or path`
+
+## Results
+
+- `latencyMs` is a whole number of milliseconds, rounded, 0 to 2147483647. A measured `500.4` against a latency objective of 500 is `up`; `500.5` is `degraded`.
+- A `reason` is at most 1000 characters. A longer one is cut to 999 characters plus `…`. Outside data in a reason (a URL scheme, a redirect origin or host, an RDAP redirect scheme or host, a DNS list, a keyword) is cut to 80 characters plus `…`.
+
+## Migration
+
+To upgrade to the release with header host bindings:
+
+- Set `PULSE_PROBE_HEADER_HOSTS` at every probe location before the upgrade. Without it, every check with a `{ "env" }` header reports `down` with the denial reason. An older probe ignores the variable, so you can set it first.
+- `latencyMs` is now an integer (rounded). Values at the objective edge can change from `degraded` to `up`.
+- A reason is now at most 1000 characters, so the api no longer refuses a result for a long reason.
 
 ## Network reach of checks
 

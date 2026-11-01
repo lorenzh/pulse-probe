@@ -37,6 +37,8 @@ Replace `<token>` with the real probe token. `PULSE_PROBE_TOKEN_FILE` can replac
 
 Checks reach whatever the probe's network reaches, internal addresses included: see [network reach of checks](docs/configuration.md#network-reach-of-checks). Set `PULSE_PROBE_BLOCK_PRIVATE_RANGES=true` to block them: see [blocking private ranges](docs/configuration.md#blocking-private-ranges).
 
+A header secret (`{ "env": "PULSE_HEADER_*" }`) is sent only to the hosts that `PULSE_PROBE_HEADER_HOSTS` binds it to, for example `PULSE_PROBE_HEADER_HOSTS='{"PULSE_HEADER_SVC_TOKEN":["svc.example.com"]}'`. Without a binding, such a check reports `down` and the secret is never sent: see [header host bindings](docs/configuration.md#header-host-bindings). Set it before you upgrade: see [migration](docs/configuration.md#migration).
+
 ## Documentation
 
 See [docs/index.md](docs/index.md): install, configuration, operation, troubleshooting and development. The quorum and incident rules are in the pulse-api docs: [quorum and incidents](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#quorum-and-incidents) and [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#locations-and-tokens).

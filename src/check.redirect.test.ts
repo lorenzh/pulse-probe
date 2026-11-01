@@ -2,9 +2,10 @@ import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Result } from "@lorenzh/pulse-contract";
+import { type Result, validatePostResultRequest } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
-import type { ProbeCheck } from "./client.ts";
+import { loadChecks, type ProbeCheck } from "./client.ts";
+import { parseHeaderHosts } from "./header-hosts.ts";
 
 let t = 0;
 const now = (): number => (t += 7);
@@ -285,4 +286,53 @@ test("credentials of the check URL never reach a reason", async () => {
   const r = await run({ url: url.href, headers: undefined });
   assert.equal(r.reason, "redirect to file: not followed");
   assert.ok(!JSON.stringify(r).includes("sentinel-pass"));
+});
+
+test("a long redirect origin is quoted at 80 characters and the result stays valid", async () => {
+  const host = `${"a".repeat(2000)}.test`;
+  for (const [location, reason] of [
+    [`http://${host}/`, `redirect to http://${"a".repeat(73)}… not followed`],
+    [`${"a".repeat(2000)}:x`, `redirect to ${"a".repeat(80)}… not followed`],
+  ] as const) {
+    const first = await serve(() => ({ status: 302, location }));
+    const r = await run({ url: `${first.origin}/` });
+    assert.deepEqual([r.status, r.statusCode, r.reason], ["down", 302, reason]);
+    assert.equal(validatePostResultRequest(r).ok, true);
+  }
+});
+
+test("a cross-origin redirect stays blocked when both hosts are bound", async () => {
+  const hosts = parseHeaderHosts('{"PULSE_HEADER_T":["a.test","b.test"]}');
+  const seen: string[] = [];
+  const fakeFetch = async (input: Parameters<typeof fetch>[0]): Promise<Response> => {
+    const url = String(input);
+    seen.push(url);
+    if (url.startsWith("https://api/")) {
+      const check = {
+        id: "r",
+        name: "R",
+        url: "http://a.test/",
+        intervalMs: 100_000,
+        headers: { Authorization: { env: "PULSE_HEADER_T" } },
+      };
+      return Response.json([check], { headers: { "x-pulse-contract": "1" } });
+    }
+    return new Response(null, { status: 302, headers: { location: "http://b.test/" } });
+  };
+  const [check] = await loadChecks("https://api", {
+    fetch: fakeFetch as typeof fetch,
+    log: () => {},
+    env: { PULSE_HEADER_T: "Bearer sentinel-552" },
+    headerHosts: hosts,
+  });
+  assert.ok(check !== undefined);
+  const r = await runCheck(check, {
+    fetch: fakeFetch as typeof fetch,
+    now,
+    monotonic: now,
+    sleep,
+    location: "default",
+  });
+  assert.deepEqual([r.status, r.reason], ["down", "redirect to http://b.test not followed"]);
+  assert.deepEqual(seen, ["https://api/checks", "http://a.test/"]);
 });

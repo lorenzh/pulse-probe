@@ -2,6 +2,7 @@ import type { DomainCheck } from "@lorenzh/pulse-contract";
 import { BlockedAddressError, isRecord } from "@lorenzh/pulse-kit";
 import { blockedReason } from "./address-policy.ts";
 import { type Attempt, attemptSignal, DAY_MS, errorCode, isTimeoutError } from "./attempt.ts";
+import { quote } from "./reason.ts";
 
 export const RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json";
 
@@ -178,9 +179,10 @@ function redirectTarget(location: string, base: string, hosts: Set<string>): str
     throw new RdapError("RDAP redirect to invalid location");
   }
   if (target.protocol !== "https:") {
-    throw new RdapError(`RDAP redirect to ${target.protocol} not followed`);
+    throw new RdapError(`RDAP redirect to ${quote(target.protocol)} not followed`);
   }
-  if (!hosts.has(target.host)) throw new RdapError(`RDAP redirect to ${target.host} not followed`);
+  if (!hosts.has(target.host))
+    throw new RdapError(`RDAP redirect to ${quote(target.host)} not followed`);
   return target.href;
 }
 

@@ -10,6 +10,7 @@ import {
   readUrl,
   StartupError,
 } from "@lorenzh/pulse-kit";
+import { type HeaderHosts, parseHeaderHosts } from "./header-hosts.ts";
 import { parseLocation } from "./location.ts";
 import { parseReloadMs } from "./reload-interval.ts";
 import { readProbeToken } from "./token.ts";
@@ -38,6 +39,8 @@ export interface Settings {
   health: HealthSettings | undefined;
   /** Checks may not connect to private, loopback, link-local or metadata addresses. */
   blockPrivateRanges: boolean;
+  /** `PULSE_PROBE_HEADER_HOSTS`, read once at start: hosts each header variable may reach. */
+  headerHosts: HeaderHosts;
 }
 
 function readHealth(env: Env): HealthSettings | undefined {
@@ -80,6 +83,7 @@ export function loadSettings(env: Env, readFile: (path: string) => string): Sett
       logLevel: readLogLevel(env),
       health: readHealth(env),
       blockPrivateRanges: readBool(env, "PULSE_PROBE_BLOCK_PRIVATE_RANGES", false),
+      headerHosts: parseHeaderHosts(env.PULSE_PROBE_HEADER_HOSTS),
     };
   } catch (err) {
     if (err instanceof StartupError) throw err;

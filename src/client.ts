@@ -7,6 +7,7 @@ import {
   type FetchJsonOptions,
   type FetchJsonResult,
   fetchJson,
+  HEADER_ENV_PREFIX,
   type HeartbeatCheck,
   headerValueSchema,
   type Result,
@@ -14,12 +15,16 @@ import {
   validateCheck,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
+import { canonicalHost, type HeaderHosts, isBound } from "./header-hosts.ts";
+import { quote } from "./reason.ts";
 
 export interface ClientDeps {
   /** Probe token for `GET /probe/checks`. Without it only the public `GET /checks` is used. */
   token?: string;
   /** Environment that `{ env }` header values resolve from. Defaults to an empty map. */
   env?: Record<string, string | undefined>;
+  /** Hosts each `{ env }` variable may be sent to. Defaults to an empty map: every reference is denied. */
+  headerHosts?: HeaderHosts;
   fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
   sleep: (ms: number) => Promise<void>;
   log: (message: string) => void;
@@ -37,8 +42,11 @@ export class StartupAbortedError extends Error {
   }
 }
 
-/** A check the probe runs: every check type except `heartbeat`, which jobs ping the API for. */
-export type ProbeCheck = Exclude<Check, HeartbeatCheck>;
+/**
+ * A check the probe runs: every check type except `heartbeat`, which jobs ping the API for.
+ * `headerDenial` is probe-internal: the check has no headers and reports `down` with this reason.
+ */
+export type ProbeCheck = Exclude<Check, HeartbeatCheck> & { headerDenial?: string };
 
 export const RETRY_MS = 10_000;
 
@@ -113,19 +121,22 @@ function toProbedCheck(c: TcpCheck | DnsCheck | DomainCheck): ProbeCheck {
   return check;
 }
 
-/** Only variables with this prefix may feed a header value. */
-const HEADER_ENV_PREFIX = "PULSE_HEADER_";
+type Resolved =
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; name: string; variable: string; problem: string }
+  | { ok: false; denial: string };
 
 /**
- * Resolves `{ env }` header values from `env`. Returns the header name and variable name
- * (never a value) of the first reference that is unset, empty or not a valid header value.
+ * Resolves `{ env }` header values from `env`, in key order. The first failure ends it: a prefix,
+ * unset or invalid value gives the header and variable names (never a value); a variable not
+ * bound to the URL's host gives a denial, and that variable is never read.
  */
 function resolveHeaders(
   headers: Record<string, string | { env: string }>,
+  url: string,
   env: Record<string, string | undefined>,
-):
-  | { ok: true; value: Record<string, string> }
-  | { ok: false; name: string; variable: string; problem: string } {
+  headerHosts: HeaderHosts,
+): Resolved {
   const value: Record<string, string> = {};
   for (const [name, raw] of Object.entries(headers ?? {})) {
     if (typeof raw === "string") {
@@ -139,6 +150,13 @@ function resolveHeaders(
         name,
         variable: raw.env,
         problem: `must start with ${HEADER_ENV_PREFIX}`,
+      };
+    }
+    if (!isBound(headerHosts, raw.env, url)) {
+      const host = quote(canonicalHost(url) ?? "");
+      return {
+        ok: false,
+        denial: `header ${name} env ${raw.env} is not bound to host ${host}`,
       };
     }
     const resolved = env[raw.env];
@@ -190,15 +208,24 @@ function readableId(raw: unknown): string {
   return typeof id === "string" ? ` ${id}` : "";
 }
 
-/** Builds the probe check; `undefined` when a header env reference is unset or invalid (logged, names only). */
+/**
+ * Builds the probe check; `undefined` when a header env reference is unset or invalid (logged,
+ * names only). An unbound reference gives the check without headers and with `headerDenial`.
+ */
 function withResolvedHeaders(
   parsed: Exclude<Check, HeartbeatCheck>,
   env: Record<string, string | undefined>,
+  headerHosts: HeaderHosts,
   log: (message: string) => void,
 ): ProbeCheck | undefined {
   const check = toCheck(parsed);
   if (parsed.type === "tls" || check.type === "tls" || parsed.headers === undefined) return check;
-  const headers = resolveHeaders(parsed.headers, env);
+  const headers = resolveHeaders(parsed.headers, parsed.url, env, headerHosts);
+  if (!headers.ok && "denial" in headers) {
+    log(`check ${check.id}: ${headers.denial}; reporting down`);
+    check.headerDenial = headers.denial;
+    return check;
+  }
   if (!headers.ok) {
     log(
       `skipping check ${check.id}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
@@ -232,7 +259,7 @@ async function requestChecks(
  */
 export async function loadChecks(
   baseUrl: string,
-  deps: Pick<ClientDeps, "fetch" | "log" | "schedule" | "signal" | "token" | "env">,
+  deps: Pick<ClientDeps, "fetch" | "log" | "schedule" | "signal" | "token" | "env" | "headerHosts">,
 ): Promise<ProbeCheck[]> {
   // The client reports the absent header before it checks the status; the probe logs it for 2xx only.
   let isWireAbsent = false;
@@ -261,7 +288,12 @@ export async function loadChecks(
     // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
     if (!parsed.ok) deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
     else if (parsed.value.type !== "heartbeat") {
-      const check = withResolvedHeaders(parsed.value, deps.env ?? {}, deps.log);
+      const check = withResolvedHeaders(
+        parsed.value,
+        deps.env ?? {},
+        deps.headerHosts ?? new Map(),
+        deps.log,
+      );
       if (check !== undefined) checks.push(check);
     }
   }
