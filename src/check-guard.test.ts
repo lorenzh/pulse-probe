@@ -11,7 +11,7 @@ function refused(): Error {
   return Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
 }
 
-function setup(answers: Record<string, string[]>, lookupMs = 0) {
+function setup(answers: Record<string, string[]>, lookupMs = 0, connectMs = 0) {
   let clock = 0;
   const lookups: string[] = [];
   const tcp: TcpConnectOptions[] = [];
@@ -31,6 +31,7 @@ function setup(answers: Record<string, string[]>, lookupMs = 0) {
     },
     tlsConnect: async (options) => {
       tls.push(options);
+      clock += connectMs;
       if (failFor.has(options.host)) throw refused();
       return { validTo: 1 };
     },
@@ -102,6 +103,20 @@ test("tls gives the connect the time the lookup left", async () => {
   const s = setup({ "public.test": ["203.0.113.10"] }, 300);
   await s.guard.tlsConnect({ host: "public.test", port: 443, timeoutMs: 1000 });
   assert.equal(s.tls[0]?.timeoutMs, 700);
+});
+
+test("tls fallback attempts share one deadline", async () => {
+  const s = setup({ "public.test": ["2001:db8::1", "203.0.113.10", "203.0.113.11"] }, 0, 600);
+  s.failFor.add("2001:db8::1");
+  s.failFor.add("203.0.113.10");
+  await assert.rejects(
+    s.guard.tlsConnect({ host: "public.test", port: 443, timeoutMs: 1000 }),
+    (err: unknown) => err instanceof Error && err.name === "TimeoutError",
+  );
+  assert.deepEqual(
+    s.tls.map((o) => o.timeoutMs),
+    [1000, 400],
+  );
 });
 
 test("tls to a name resolving to a private address makes no connect call", async () => {

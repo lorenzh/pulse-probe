@@ -48,17 +48,22 @@ export function createCheckGuard(deps: CheckGuardDeps): CheckGuard {
     const signal = AbortSignal.timeout(timeoutMs);
     const start = deps.monotonic();
     const addresses = await resolveAllowed(host, { lookup, classify, signal });
-    const remaining = Math.max(1, timeoutMs - (deps.monotonic() - start));
     const servername = options.servername ?? (isIP(host) === 0 ? host : undefined);
     return connectFirst(
       addresses,
-      (address) =>
-        deps.tlsConnect({
+      (address) => {
+        // All attempts share one deadline: each connect gets only the time that is left.
+        const remaining = timeoutMs - (deps.monotonic() - start);
+        if (remaining <= 0) {
+          return Promise.reject(new DOMException("The operation timed out.", "TimeoutError"));
+        }
+        return deps.tlsConnect({
           host: address,
           port: options.port,
           timeoutMs: remaining,
           ...(servername !== undefined ? { servername } : {}),
-        }),
+        });
+      },
       signal,
     );
   };
