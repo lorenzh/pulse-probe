@@ -85,6 +85,12 @@ test("dns mismatch is down and lists expected and actual values", async () => {
   assert.equal(r.reason, "expected [192.0.2.1], got [192.0.2.2, 192.0.2.3]");
 });
 
+test("dns quotes each long list in the mismatch reason at 80 characters", async () => {
+  const check = dnsCheck("TXT", { expected: Array.from({ length: 20 }, () => "a".repeat(500)) });
+  const r = await runCheck(check, { ...deps, resolve: answer(["b"]) });
+  assert.equal(r.reason, `expected [${"a".repeat(80)}…], got [b]`);
+});
+
 test("dns NXDOMAIN and no data have their own reasons", async () => {
   const nx = await runCheck(dnsCheck("A"), { ...deps, resolve: fail("ENOTFOUND") });
   assert.equal(nx.reason, "NXDOMAIN: example.test does not exist");

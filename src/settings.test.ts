@@ -145,3 +145,40 @@ for (const value of ["TRUE", "yes", "on", "2"]) {
     );
   });
 }
+
+test("loadSettings reads PULSE_PROBE_HEADER_HOSTS and defaults to no bindings", () => {
+  assert.equal(load(good).headerHosts.size, 0);
+  const s = load({
+    ...good,
+    PULSE_PROBE_HEADER_HOSTS:
+      '{"PULSE_HEADER_SVC_TOKEN":["svc.example.com","192.0.2.7","[fd00::7]"]}',
+  });
+  assert.deepEqual(
+    [...(s.headerHosts.get("PULSE_HEADER_SVC_TOKEN") ?? [])],
+    ["svc.example.com", "192.0.2.7", "[fd00::7]"],
+  );
+});
+
+test("an invalid PULSE_PROBE_HEADER_HOSTS stops the start without echoing the value", () => {
+  for (const [text, message] of [
+    ["{", "PULSE_PROBE_HEADER_HOSTS must be a JSON object of PULSE_HEADER_* names to host lists"],
+    [
+      '{"SVC_TOKEN":["a"]}',
+      "PULSE_PROBE_HEADER_HOSTS: key 1 must match ^PULSE_HEADER_[A-Za-z0-9_]{1,115}$",
+    ],
+    [
+      '{"PULSE_HEADER_T":"a"}',
+      "PULSE_PROBE_HEADER_HOSTS.PULSE_HEADER_T must be an array of at most 100 hosts",
+    ],
+    [
+      '{"PULSE_HEADER_T":["u@a"]}',
+      "PULSE_PROBE_HEADER_HOSTS.PULSE_HEADER_T[0] must be a host name or IP address without scheme, port or path",
+    ],
+  ] as const) {
+    assert.throws(
+      () => load({ ...good, PULSE_PROBE_HEADER_HOSTS: text }),
+      (err: unknown) =>
+        err instanceof StartupError && err.message === message && !err.message.includes(text),
+    );
+  }
+});

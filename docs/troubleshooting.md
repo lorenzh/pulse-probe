@@ -47,6 +47,16 @@ Action: compare both values with the API's tokens file. The probe keeps running 
 Cause: pulse-api is down, `PULSE_API_URL` is wrong (the reason shows `HTTP <code>`, a network code such as `ECONNREFUSED`, or `unexpected response`), or the request timed out after 10 seconds (`timed out`).
 Action: fix the URL or start the API. The probe retries on its own. After the first start it keeps the running checks and logs `reloading checks failed`. Inside Docker, `localhost` is the container; use `host.docker.internal` or the service name.
 
+## `PULSE_PROBE_HEADER_HOSTS ...` at startup (exit 2)
+
+Cause: `PULSE_PROBE_HEADER_HOSTS` is not a JSON object, is over 65536 bytes, has a key that does not match `^PULSE_HEADER_[A-Za-z0-9_]{1,115}$`, a value that is not an array of at most 100 hosts, or an entry with a scheme, port, path, userinfo, wildcard or whitespace. The message names the key position or the variable and entry index, never the value.
+Action: fix the value; see [header host bindings](configuration.md#header-host-bindings).
+
+## A check is `down` with `header <Name> env <VAR> is not bound to host <host>`
+
+Cause: the check sends `{ "env": "<VAR>" }`, and `PULSE_PROBE_HEADER_HOSTS` does not bind `<VAR>` to the check's host (or is unset). The probe sent no request and did not read the variable. The log has `check <id>: ... ; reporting down` on each load.
+Action: add the host to the variable's list and restart the probe, or point the check at a bound host. See [header host bindings](configuration.md#header-host-bindings).
+
 ## `skipping invalid check: ...`
 
 Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others.

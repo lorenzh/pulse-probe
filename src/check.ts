@@ -1,11 +1,12 @@
 import { isIP } from "node:net";
 import tls from "node:tls";
-import type {
-  ExpectedStatus,
-  HttpCheck,
-  JsonAssertion,
-  Result,
-  TlsCheck,
+import {
+  type ExpectedStatus,
+  type HttpCheck,
+  type JsonAssertion,
+  MAX_TIMER_MS,
+  type Result,
+  type TlsCheck,
 } from "@lorenzh/pulse-contract";
 import { BlockedAddressError, isRecord } from "@lorenzh/pulse-kit";
 import { blockedReason } from "./address-policy.ts";
@@ -16,6 +17,7 @@ import { attemptTcp, type TcpConnect, tcpConnect } from "./check-tcp.ts";
 import type { ProbeCheck } from "./client.ts";
 
 import { userAgent } from "./location.ts";
+import { capReason, quote } from "./reason.ts";
 
 export const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -97,7 +99,33 @@ export interface CheckDeps {
   signal?: AbortSignal;
 }
 
+/**
+ * Runs one check. A check with `headerDenial` gets no request and reports `down`.
+ * Every reason is capped at the contract's length here, the single exit.
+ */
 export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
+  const result =
+    check.headerDenial === undefined
+      ? await runAttempts(check, deps)
+      : {
+          checkId: check.id,
+          timestamp: deps.now(),
+          status: "down" as const,
+          statusCode: null,
+          latencyMs: 0,
+          reason: check.headerDenial,
+          location: deps.location,
+          attempts: 1,
+        };
+  return result.reason === null ? result : { ...result, reason: capReason(result.reason) };
+}
+
+/** Whole milliseconds between two monotonic readings, within the contract's range. */
+function latencyBetween(start: number, end: number): number {
+  return Math.min(MAX_TIMER_MS, Math.round(Math.max(0, end - start)));
+}
+
+async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> {
   const timeoutMs = check.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const start = deps.now();
   const startMono = deps.monotonic();
@@ -113,7 +141,7 @@ export async function runCheck(check: ProbeCheck, deps: CheckDeps): Promise<Resu
     timestamp: start,
     status,
     statusCode,
-    latencyMs: Math.max(0, deps.monotonic() - attemptStart),
+    latencyMs: latencyBetween(attemptStart, deps.monotonic()),
     reason,
     location: deps.location,
     attempts,
@@ -226,13 +254,6 @@ async function readBody(
   return { text: text + decoder.decode(), isTruncated };
 }
 
-const MAX_QUOTE_CHARS = 80;
-
-/** Response data quoted in a reason: at most 80 characters. */
-function quote(text: string): string {
-  return text.length > MAX_QUOTE_CHARS ? `${text.slice(0, MAX_QUOTE_CHARS)}…` : text;
-}
-
 const DEFAULT_EXPECTED_STATUS: ExpectedStatus[] = ["200-299"];
 
 function matchesStatus(code: number, expected: ExpectedStatus[]): boolean {
@@ -307,7 +328,8 @@ async function bodyFailure(check: HttpLikeCheck, res: Response): Promise<string 
     res.body,
     jsonAssert === undefined ? keyword : undefined,
   );
-  if (keyword !== undefined && !text.includes(keyword)) return `keyword "${keyword}" not found`;
+  if (keyword !== undefined && !text.includes(keyword))
+    return `keyword "${quote(keyword)}" not found`;
   return jsonAssert === undefined ? null : jsonFailure(text, isTruncated, jsonAssert);
 }
 
@@ -372,7 +394,9 @@ function urlFailure(url: string): string | null {
     return "invalid URL";
   }
   // After `new URL`, a protocol matches `[a-z][a-z0-9+.-]*:`, so quoting it is safe.
-  return isHttpProtocol(parsed.protocol) ? null : `unsupported URL scheme "${parsed.protocol}"`;
+  return isHttpProtocol(parsed.protocol)
+    ? null
+    : `unsupported URL scheme "${quote(parsed.protocol)}"`;
 }
 
 type Hop = { url: string; method: string } | { reason: string };
@@ -457,7 +481,7 @@ function hopTarget(location: string, url: string): URL | { reason: string } {
   }
   return isHttpProtocol(target.protocol)
     ? target
-    : { reason: `redirect to ${target.protocol} not followed` };
+    : { reason: `redirect to ${quote(target.protocol)} not followed` };
 }
 
 /** The next hop of a check with headers or a body: GET only, same origin. */
@@ -473,7 +497,7 @@ function secretHop(
   const target = hopTarget(location, url);
   if (!(target instanceof URL)) return target;
   if (target.origin !== new URL(url).origin)
-    return { reason: `redirect to ${target.origin} not followed` };
+    return { reason: `redirect to ${quote(target.origin)} not followed` };
   return hops >= MAX_REDIRECTS ? { reason: "too many redirects" } : { url: target.href, method };
 }
 

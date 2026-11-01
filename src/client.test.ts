@@ -656,3 +656,64 @@ test("postResult rejects a non-204 success", async () => {
     await close(server);
   }
 });
+
+test("capped and quoted reasons are posted as they are", async () => {
+  const bodies: unknown[] = [];
+  const api = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      bodies.push(await req.json());
+      return new Response(null, { status: 204 });
+    },
+  });
+  try {
+    const redirect = await runCheck(
+      { id: "r", name: "R", url: "http://a.test/", intervalMs: 60_000, headers: { "X-Key": "k" } },
+      {
+        fetch: (async () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: `http://${"a".repeat(2000)}.test/` },
+          })) as unknown as typeof fetch,
+        now: () => 1,
+        monotonic: () => 1,
+        sleep: async () => {},
+        location: "default",
+      },
+    );
+    const tcp = await runCheck(
+      { id: "t", name: "T", type: "tcp", host: "127.0.0.1", port: 1, intervalMs: 60_000 },
+      {
+        fetch,
+        now: () => 1,
+        monotonic: () => 1,
+        sleep: async () => {},
+        location: "default",
+        tcpConnect: async () => {
+          throw new Error("m".repeat(5000));
+        },
+      },
+    );
+    const base = `http://127.0.0.1:${api.port}`;
+    for (const r of [redirect, tcp]) {
+      assert.equal(await postResult(base, r, { fetch, log: () => {}, token: "tok" }), "accepted");
+    }
+    assert.deepEqual(
+      bodies.map((b) => {
+        const { status, statusCode, reason } = b as Record<string, unknown>;
+        return { status, statusCode, reason };
+      }),
+      [
+        {
+          status: "down",
+          statusCode: 302,
+          reason: `redirect to http://${"a".repeat(73)}… not followed`,
+        },
+        { status: "down", statusCode: null, reason: `${"m".repeat(999)}…` },
+      ],
+    );
+  } finally {
+    await api.stop(true);
+  }
+});

@@ -6,6 +6,8 @@ The probe writes JSON lines: `{"time":"<ISO 8601>","level":"info","msg":"...", .
 
 | Message                                                                                | Level | Meaning                                              |
 | -------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------- |
+| `header host bindings for <n> variable(s)`                                             | info  | Startup read `PULSE_PROBE_HEADER_HOSTS`.             |
+| `check <id>: header <Name> env <VAR> is not bound to host <host>; reporting down`      | warn  | A check's header secret is not bound to its host.    |
 | `running <n> check(s) against <url> from location <location>`                          | info  | Startup finished fetching the checks.                |
 | `fetching checks failed: <reason>; retrying in 10000ms`                                | warn  | The API is unreachable or answered badly at startup. |
 | `dropping result for <id>: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION` | warn  | The API answered 401 or 403.                         |

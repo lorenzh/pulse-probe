@@ -3,6 +3,7 @@ import type { DnsCheck, DnsRecordType } from "@lorenzh/pulse-contract";
 import { BlockedAddressError } from "@lorenzh/pulse-kit";
 import { blockedReason } from "./address-policy.ts";
 import { type Attempt, attemptSignal, errorCode, errorReason, isTimeoutError } from "./attempt.ts";
+import { quote } from "./reason.ts";
 
 export interface ResolveOptions {
   dnsName: string;
@@ -117,7 +118,7 @@ export async function attemptDns(
     if (expected.every((v) => got.includes(v))) return { status: "up", reason: null };
     return {
       status: "down",
-      reason: `expected [${expected.join(", ")}], got [${got.join(", ")}]`,
+      reason: `expected [${quote(expected.join(", "))}], got [${quote(got.join(", "))}]`,
     };
   } catch (err) {
     return { status: "down", reason: failureReason(check, err, timeoutMs) };

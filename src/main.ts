@@ -126,6 +126,7 @@ function checkTransports(settings: Settings): CheckTransports {
 }
 
 async function runChecks(settings: Settings, metrics: Metrics, onReady: () => void): Promise<void> {
+  logger.info(`header host bindings for ${settings.headerHosts.size} variable(s)`);
   const log = (message: string): void => logger.warn(message);
   const abortableSleep = (ms: number): Promise<void> =>
     sleep(ms, undefined, { signal: shutdown.signal });
@@ -140,6 +141,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
         signal: shutdown.signal,
         token: settings.token,
         env: process.env,
+        headerHosts: settings.headerHosts,
       },
       RETRY_MS,
     );
@@ -166,6 +168,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
         signal: shutdown.signal,
         token: settings.token,
         env: process.env,
+        headerHosts: settings.headerHosts,
       }),
     apply: (next) => {
       metrics.setChecks(next);

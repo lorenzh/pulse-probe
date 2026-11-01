@@ -367,6 +367,7 @@ test("an RDAP redirect is refused unless it is https to a bootstrap host", async
     ["https://ignored.test/domain/example.test", "RDAP redirect to ignored.test not followed"],
     [`https://127.0.0.1:${port + 1}/x`, `RDAP redirect to 127.0.0.1:${port + 1} not followed`],
     ["https://[bad/", "RDAP redirect to invalid location"],
+    [`https://${"a".repeat(2000)}.test/`, `RDAP redirect to ${"a".repeat(80)}… not followed`],
   ];
   for (const [location, reason] of cases) {
     redirectTo(r, location ?? "");

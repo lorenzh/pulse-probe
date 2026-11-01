@@ -521,3 +521,33 @@ test("an https URL with credentials is checked", async () => {
   assert.equal(r.status, "up");
   assert.equal(rec.calls.length, 1);
 });
+
+test("latency is sent in whole milliseconds and never below 0", async () => {
+  for (const [readings, expected] of [
+    [[100.25, 101.75], 2],
+    [[0, -3], 0],
+  ] as const) {
+    const { server, url } = await listen((_q, res) => res.end("ok"));
+    try {
+      let i = 0;
+      const mono = (): number => readings[Math.min(i++, 1)] ?? 0;
+      const r = await runCheck(
+        { id: "a", name: "A", url, intervalMs: 1000 },
+        { ...deps, monotonic: mono },
+      );
+      assert.equal(r.latencyMs, expected);
+    } finally {
+      await close(server);
+    }
+  }
+});
+
+test("the latency objective compares the rounded latency", async () => {
+  const below = await objectiveRun(500.4, 500);
+  assert.deepEqual([below.status, below.latencyMs, below.reason], ["up", 500, null]);
+  const above = await objectiveRun(500.5, 500);
+  assert.deepEqual(
+    [above.status, above.latencyMs, above.reason],
+    ["degraded", 501, "latency 501ms over objective 500ms"],
+  );
+});

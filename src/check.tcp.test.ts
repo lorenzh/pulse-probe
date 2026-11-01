@@ -101,3 +101,13 @@ test("tcp retries and reports the attempts; shutdown stops the retries", async (
   assert.equal(stopped.status, "down");
   assert.equal(calls, 1);
 });
+
+test("a long error message is capped at 1000 characters in the reason", async () => {
+  const connect: TcpConnect = async () => {
+    throw new Error("m".repeat(5000));
+  };
+  const r = await runCheck(tcpCheck(1), { ...deps, tcpConnect: connect });
+  assert.equal(r.status, "down");
+  assert.equal(r.reason, `${"m".repeat(999)}…`);
+  assert.equal(r.reason?.length, 1000);
+});
