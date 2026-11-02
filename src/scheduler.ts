@@ -11,7 +11,10 @@ export interface SchedulerDeps {
   timer: Timer;
   /** Monotonic clock in ms. */
   now: () => number;
-  run: (check: ProbeCheck) => Promise<Result>;
+  /** Returns a number in [0, 1); samples the first-run delay of each new entry. */
+  random: () => number;
+  /** `signal` aborts when the check is removed, replaced or the scheduler stops. */
+  run: (check: ProbeCheck, signal: AbortSignal) => Promise<Result>;
   onResult: (result: Result) => void | Promise<void>;
   onError?: (check: ProbeCheck, err: unknown) => void;
 }
@@ -24,40 +27,74 @@ export interface Scheduler {
 
 interface Entry {
   check: ProbeCheck;
+  controller: AbortController;
   handle?: unknown;
+  /** Settles when the entry's current run, including `onResult`, is over. */
+  running?: Promise<void>;
+}
+
+const MAX_FIRST_DELAY_MS = 1000;
+
+/** Whole ms in [0, min(intervalMs, 1000) - 1]; a value outside [0, 1) is clamped. */
+function firstDelay(intervalMs: number, sample: number): number {
+  const bound = Math.max(1, Math.min(intervalMs, MAX_FIRST_DELAY_MS));
+  const delay = Math.floor((Number.isFinite(sample) ? sample : 0) * bound);
+  return Math.min(bound - 1, Math.max(0, delay));
 }
 
 /**
- * Runs each check immediately, then once per interval. The next run is only
- * scheduled after the previous one finished, so a check never overlaps itself.
+ * Runs each new check after a random delay below min(intervalMs, 1000) ms, then once per
+ * interval from the previous start. The next run is only scheduled after the previous one
+ * finished, so a check never overlaps itself, also not across a replacement.
  * `deps.now` must be a monotonic clock. A removed or replaced check never posts.
  */
 export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Scheduler {
   let stopped = false;
   const entries = new Map<string, Entry>();
 
-  const tick = async (entry: Entry): Promise<void> => {
-    const isCurrent = (): boolean => !stopped && entries.get(entry.check.id) === entry;
-    entry.handle = undefined;
-    if (!isCurrent()) return;
-    const { check } = entry;
+  const isCurrent = (entry: Entry): boolean => !stopped && entries.get(entry.check.id) === entry;
+
+  const execute = async (entry: Entry): Promise<void> => {
+    const { check, controller } = entry;
     const started = deps.now();
     try {
-      const result = await deps.run(check);
-      if (isCurrent()) await deps.onResult(result);
+      const result = await deps.run(check, controller.signal);
+      if (isCurrent(entry)) await deps.onResult(result);
     } catch (err) {
-      deps.onError?.(check, err);
+      // A run rejected after its entry was aborted is the expected end of a cancelled run.
+      if (!controller.signal.aborted) deps.onError?.(check, err);
     }
-    if (!isCurrent()) return;
+    if (!isCurrent(entry)) return;
     const delay = Math.min(MAX_TIMER_MS, Math.max(0, check.intervalMs - (deps.now() - started)));
-    entry.handle = deps.timer.setTimeout(() => void tick(entry), delay);
+    entry.handle = deps.timer.setTimeout(() => tick(entry), delay);
   };
 
-  const remove = (id: string): void => {
+  const tick = (entry: Entry, previous?: Promise<void>): void => {
+    entry.handle = undefined;
+    if (!isCurrent(entry)) return;
+    if (previous !== undefined) {
+      // A replacement waits for the aborted old run so the two never overlap.
+      void previous.then(() => tick(entry));
+      return;
+    }
+    const running = execute(entry);
+    entry.running = running;
+  };
+
+  const remove = (id: string): Entry | undefined => {
     const entry = entries.get(id);
-    if (entry === undefined) return;
+    if (entry === undefined) return undefined;
     if (entry.handle !== undefined) deps.timer.clearTimeout(entry.handle);
     entries.delete(id);
+    entry.controller.abort();
+    return entry;
+  };
+
+  const add = (check: ProbeCheck, previous?: Promise<void>): void => {
+    const entry: Entry = { check, controller: new AbortController() };
+    entries.set(check.id, entry);
+    const delay = firstDelay(check.intervalMs, deps.random());
+    entry.handle = deps.timer.setTimeout(() => tick(entry, previous), delay);
   };
 
   const sync = (next: ProbeCheck[]): void => {
@@ -66,13 +103,8 @@ export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Sched
     for (const id of [...entries.keys()]) if (!wanted.has(id)) remove(id);
     for (const [id, check] of wanted) {
       const existing = entries.get(id);
-      if (existing !== undefined) {
-        if (isDeepStrictEqual(existing.check, check)) continue;
-        remove(id);
-      }
-      const entry: Entry = { check };
-      entries.set(id, entry);
-      void tick(entry);
+      if (existing !== undefined && isDeepStrictEqual(existing.check, check)) continue;
+      add(check, remove(id)?.running);
     }
   };
 

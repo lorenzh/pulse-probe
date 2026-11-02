@@ -188,7 +188,9 @@ HTTP checks with method `GET` or `HEAD` (also an omitted method), and TCP, DNS a
 
 ### Schedule
 
-Each check runs immediately at startup and then every `intervalMs`, measured from the start of the previous run. A check never overlaps with itself: the next run is scheduled only after the previous one, including its result post, has finished. If a run takes longer than the interval, the next one starts at once.
+A new check (every check at startup, a check added by a reload, a check replaced because it changed) runs first after a random delay of 0 to `min(intervalMs, 1000) - 1` ms, so many checks with the same interval do not all start in the same moment. It then runs every `intervalMs`, measured from the start of the previous run. An unchanged check keeps its schedule on reload. A check never overlaps with itself: the next run is scheduled only after the previous one, including its result post, has finished. If a run takes longer than the interval, the next one starts at once.
+
+When a reload changes or removes a check, its running attempt and its retry wait are aborted and its result is dropped. A changed check starts only after the aborted run has ended and its own first delay has passed, so the old and the new run never overlap. A cancelled run logs no error.
 
 ## Header host bindings
 

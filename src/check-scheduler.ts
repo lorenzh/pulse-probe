@@ -12,6 +12,8 @@ export interface CheckSchedulerDeps {
   tlsConnect?: CheckDeps["tlsConnect"];
   resolve?: CheckDeps["resolve"];
   sleep: CheckDeps["sleep"];
+  /** Samples the first-run delay of each new check; `main.ts` wires `Math.random`. */
+  random: () => number;
   location: string;
   signal: AbortSignal;
   /** Registers a running promise so that shutdown can wait for it. */
@@ -28,7 +30,8 @@ export function startCheckScheduler(checks: ProbeCheck[], deps: CheckSchedulerDe
   return startScheduler(checks, {
     timer: deps.timer,
     now: monotonic,
-    run: (check) =>
+    random: deps.random,
+    run: (check, entrySignal) =>
       deps.track(
         runCheck(check, {
           fetch: deps.fetch,
@@ -36,7 +39,7 @@ export function startCheckScheduler(checks: ProbeCheck[], deps: CheckSchedulerDe
           monotonic,
           sleep: deps.sleep,
           location: deps.location,
-          signal: deps.signal,
+          signal: AbortSignal.any([entrySignal, deps.signal]),
           shutdown: deps.signal,
           ...(deps.tcpConnect !== undefined ? { tcpConnect: deps.tcpConnect } : {}),
           ...(deps.tlsConnect !== undefined ? { tlsConnect: deps.tlsConnect } : {}),

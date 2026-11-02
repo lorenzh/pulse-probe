@@ -218,6 +218,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
     timer,
     ...checkTransports(settings),
     sleep: (ms, signal) => sleep(ms, undefined, { signal: signal ?? shutdown.signal }),
+    random: Math.random,
     location: settings.location,
     signal: shutdown.signal,
     track,
