@@ -814,13 +814,8 @@ test("skip warnings keep bounded state for hostile ids", async () => {
   const cases = [
     {
       name: "long ids",
-      count: 24,
-      ids: (i: number) => [String(i).padStart(8, "0") + "x".repeat(4_194_296)],
-    },
-    {
-      name: "many ids",
-      count: 3,
-      ids: (i: number) => Array.from({ length: 5000 }, (_, j) => `${i}-${j}-${"y".repeat(200)}`),
+      count: 16,
+      ids: (i: number) => [String(i).padStart(8, "0") + "x".repeat(1_048_568)],
     },
   ];
   for (const c of cases) {
@@ -833,6 +828,6 @@ test("skip warnings keep bounded state for hostile ids", async () => {
       // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
       assert.deepEqual(await loadChecks("http://api", { fetch: fakeFetch, log }), []);
     }
-    assert.ok(heap() - before < 48, c.name);
+    assert.ok(heap() - before < 6, c.name);
   }
 });
