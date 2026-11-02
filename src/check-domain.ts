@@ -23,7 +23,10 @@ export interface DomainDeps {
   monotonic: () => number;
   /** Defaults to the IANA bootstrap file. */
   bootstrapUrl?: string;
+  /** Ends this run: its wait on the bootstrap and its RDAP requests. */
   signal?: AbortSignal;
+  /** Process lifetime: the only signal of the shared bootstrap fetch. */
+  shutdown?: AbortSignal;
 }
 
 /** A reason-bearing failure of the RDAP lookup. */
@@ -133,7 +136,7 @@ async function fetchBootstrap(
 function refreshBootstrap(url: string, deps: DomainDeps): Promise<Bootstrap> {
   let pending = bootstrapInFlight.get(url);
   if (pending === undefined) {
-    const signal = attemptSignal(BOOTSTRAP_TIMEOUT_MS, deps.signal);
+    const signal = attemptSignal(BOOTSTRAP_TIMEOUT_MS, deps.shutdown);
     pending = fetchBootstrap(url, deps, signal).finally(() => bootstrapInFlight.delete(url));
     bootstrapInFlight.set(url, pending);
   }
@@ -156,6 +159,8 @@ export async function bootstrapSettled(url: string): Promise<void> {
 }
 
 async function loadBootstrap(deps: DomainDeps, signal: AbortSignal): Promise<Bootstrap> {
+  // An aborted run must not start a shared refresh that other checks would then wait on.
+  signal.throwIfAborted();
   const url = deps.bootstrapUrl ?? RDAP_BOOTSTRAP_URL;
   const cached = bootstrapCache.get(url);
   if (cached === undefined) return untilAborted(refreshBootstrap(url, deps), signal);

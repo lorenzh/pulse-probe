@@ -37,6 +37,7 @@ export function startCheckScheduler(checks: ProbeCheck[], deps: CheckSchedulerDe
           sleep: deps.sleep,
           location: deps.location,
           signal: deps.signal,
+          shutdown: deps.signal,
           ...(deps.tcpConnect !== undefined ? { tcpConnect: deps.tcpConnect } : {}),
           ...(deps.tlsConnect !== undefined ? { tlsConnect: deps.tlsConnect } : {}),
           ...(deps.resolve !== undefined ? { resolve: deps.resolve } : {}),

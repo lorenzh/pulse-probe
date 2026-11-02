@@ -48,6 +48,7 @@ export const resolveRecords: Resolve = async ({
   timeoutMs,
   signal,
 }) => {
+  signal.throwIfAborted();
   const r = new Resolver({ timeout: timeoutMs, tries: 1 });
   if (resolver !== undefined) r.setServers([resolver]);
   const onAbort = (): void => r.cancel();

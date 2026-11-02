@@ -282,7 +282,7 @@ test("a stalled bootstrap refresh does not hold up a check with a stale map", as
   const stub = stubBootstrap("stall");
   const ctl = new AbortController();
   mono = 5000;
-  const deps = stub.deps({ signal: ctl.signal });
+  const deps = stub.deps({ signal: ctl.signal, shutdown: ctl.signal });
   assert.equal((await runCheck(domain(), deps)).status, "up");
   mono += DAY_MS;
   const results = await Promise.all([
@@ -306,7 +306,7 @@ test("shutdown aborts a background bootstrap refresh", async () => {
   const stub = stubBootstrap("stall");
   const ctl = new AbortController();
   mono = 9000;
-  const deps = stub.deps({ signal: ctl.signal });
+  const deps = stub.deps({ signal: ctl.signal, shutdown: ctl.signal });
   await runCheck(domain(), deps);
   mono += DAY_MS;
   await runCheck(domain({ timeoutMs: 60_000 }), deps);
@@ -317,7 +317,7 @@ test("shutdown aborts a background bootstrap refresh", async () => {
   assert.equal(refresh?.aborted, true);
   // The refresh no longer counts as in flight: the next stale check starts a new one.
   const next = new AbortController();
-  await runCheck(domain(), stub.deps({ signal: next.signal }));
+  await runCheck(domain(), stub.deps({ signal: next.signal, shutdown: next.signal }));
   assert.equal(stub.requests.length, 3);
   assert.equal(stub.requests[2]?.aborted, false);
   next.abort();
@@ -426,4 +426,96 @@ test("a redirect of the bootstrap file is not followed", async () => {
   });
   assert.deepEqual([res.status, res.reason], ["down", "RDAP bootstrap redirect not followed"]);
   assert.deepEqual(seen, [{ url, redirect: "manual" }]);
+});
+
+test("a domain run aborted on entry makes no fetch and starts no bootstrap", async () => {
+  const urls: string[] = [];
+  const ctl = new AbortController();
+  ctl.abort({ why: "shutdown" });
+  const res = await runCheck(domain({ timeoutMs: 60_000 }), {
+    fetch: async (input) => {
+      urls.push(String(input));
+      return new Response(events(90));
+    },
+    now: () => NOW,
+    monotonic: () => mono,
+    sleep: async () => {},
+    location: "default",
+    rdapBootstrapUrl: `https://bootstrap.stub/dns.json?n=${seq++}`,
+    signal: ctl.signal,
+  });
+  assert.deepEqual([res.status, res.reason], ["down", "timeout after 60000ms"]);
+  assert.deepEqual(urls, []);
+});
+
+test("aborting one run waiting on the shared bootstrap ends only that run", async () => {
+  const url = `https://bootstrap.stub/dns.json?n=${seq++}`;
+  const bootstrapSignals: AbortSignal[] = [];
+  let answer: () => void = () => {};
+  let requested: () => void = () => {};
+  const isRequested = new Promise<void>((r) => {
+    requested = r;
+  });
+  const fetchFn: CheckDeps["fetch"] = async (input, init) => {
+    if (String(input) !== url) return new Response(events(90));
+    const signal = init?.signal;
+    if (signal instanceof AbortSignal) bootstrapSignals.push(signal);
+    requested();
+    await new Promise<void>((resolve, reject) => {
+      answer = resolve;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+    return new Response(JSON.stringify({ services: [[["test"], ["https://rdap.stub/"]]] }));
+  };
+  const shutdown = new AbortController();
+  const first = new AbortController();
+  const second = new AbortController();
+  const base = {
+    fetch: fetchFn,
+    now: () => NOW,
+    monotonic: () => mono,
+    sleep: async () => {},
+    location: "default",
+    rdapBootstrapUrl: url,
+    shutdown: shutdown.signal,
+  };
+  const runFirst = runCheck(domain({ timeoutMs: 60_000 }), { ...base, signal: first.signal });
+  const runSecond = runCheck(domain({ timeoutMs: 60_000 }), { ...base, signal: second.signal });
+  await isRequested;
+  first.abort({ why: "changed" });
+  const firstResult = await runFirst;
+  assert.equal(firstResult.status, "down");
+  assert.equal(bootstrapSignals.length, 1);
+  assert.equal(bootstrapSignals[0]?.aborted, false);
+  answer();
+  const secondResult = await runSecond;
+  assert.deepEqual([secondResult.status, secondResult.reason], ["up", null]);
+  assert.equal(bootstrapSignals.length, 1);
+
+  // A new shared fetch for a fresh URL: shutdown, not a run signal, aborts it.
+  const other = `https://bootstrap.stub/dns.json?n=${seq++}`;
+  let refetched: () => void = () => {};
+  const isRefetched = new Promise<void>((r) => {
+    refetched = r;
+  });
+  const pending = runCheck(domain({ timeoutMs: 60_000 }), {
+    ...base,
+    fetch: async (input, init) => {
+      const signal = init?.signal;
+      if (signal instanceof AbortSignal) bootstrapSignals.push(signal);
+      refetched();
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+    rdapBootstrapUrl: other,
+    signal: second.signal,
+  });
+  await isRefetched;
+  assert.equal(bootstrapSignals[1]?.aborted, false);
+  shutdown.abort({ why: "shutdown" });
+  await pending;
+  await bootstrapSettled(other);
+  assert.equal(bootstrapSignals.length, 2);
+  assert.equal(bootstrapSignals[1]?.aborted, true);
 });

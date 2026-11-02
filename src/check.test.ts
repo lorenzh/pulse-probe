@@ -620,3 +620,61 @@ test("retries: POST redirected by 303 to a failing GET is not retried", async ()
   );
   assert.deepEqual(run, { fetches: ["POST", "GET"], sleeps: [], attempts: 1 });
 });
+
+test("aborting a GET during the retry wait ends the run after 1 fetch", async () => {
+  const ctl = new AbortController();
+  let fetches = 0;
+  const fakeFetch = async (): Promise<Response> => {
+    fetches++;
+    return new Response(null, { status: 500 });
+  };
+  const abortingSleep = (_ms: number, signal?: AbortSignal): Promise<void> =>
+    new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      ctl.abort({ why: "changed" });
+    });
+  const r = await runCheck(
+    { id: "a", name: "A", url: "http://check.test/", intervalMs: 60_000, retries: 2 },
+    { ...deps, fetch: fakeFetch, sleep: abortingSleep, signal: ctl.signal },
+  );
+  assert.equal(fetches, 1);
+  assert.equal(r.attempts, 1);
+});
+
+test("a run aborted on entry starts no work for any check type", async () => {
+  const ctl = new AbortController();
+  ctl.abort({ why: "shutdown" });
+  const calls: string[] = [];
+  const fakeDeps = {
+    ...deps,
+    signal: ctl.signal,
+    fetch: async (): Promise<Response> => {
+      calls.push("fetch");
+      return new Response("ok");
+    },
+    tcpConnect: async (): Promise<void> => {
+      calls.push("tcp");
+    },
+    tlsConnect: async (): Promise<{ validTo: number }> => {
+      calls.push("tls");
+      return { validTo: 1 };
+    },
+    resolve: async (): Promise<string[]> => {
+      calls.push("dns");
+      return ["192.0.2.1"];
+    },
+  };
+  const base = { name: "X", intervalMs: 60_000, timeoutMs: 60_000, retries: 2 };
+  const checks = [
+    { ...base, id: "http", url: "http://check.test/" },
+    { ...base, id: "tcp", type: "tcp" as const, host: "check.test", port: 25 },
+    { ...base, id: "tls", type: "tls" as const, host: "check.test", port: 443, warnDays: 14 },
+    { ...base, id: "dns", type: "dns" as const, dnsName: "check.test", recordType: "A" as const },
+    { ...base, id: "domain", type: "domain" as const, domain: "check.test", warnDays: 14 },
+  ];
+  for (const check of checks) {
+    const r = await runCheck(check, fakeDeps);
+    assert.deepEqual([r.checkId, r.status, r.reason], [check.id, "down", "timeout after 60000ms"]);
+  }
+  assert.deepEqual(calls, []);
+});

@@ -217,7 +217,7 @@ async function runChecks(settings: Settings, metrics: Metrics, onReady: () => vo
   const scheduler = startCheckScheduler(checks, {
     timer,
     ...checkTransports(settings),
-    sleep: abortableSleep,
+    sleep: (ms, signal) => sleep(ms, undefined, { signal: signal ?? shutdown.signal }),
     location: settings.location,
     signal: shutdown.signal,
     track,
