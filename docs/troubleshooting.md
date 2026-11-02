@@ -59,7 +59,7 @@ Action: add the host to the variable's list and restart the probe, or point the 
 
 ## `skipping invalid check: ...`
 
-Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process, not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
+Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (up to 10000 remembered IDs, then the memory is reset), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
 Action: fix the check in the API's checks file and restart the API. The probe picks it up on its next reload.
 
 ## `contract version mismatch: ...`

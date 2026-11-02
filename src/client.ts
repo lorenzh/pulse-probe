@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type Check,
   checkWireVersion,
@@ -175,9 +176,15 @@ function resolveHeaders(
 // Loggers that already reported a missing version header: the reload loop must not repeat it.
 const warnedAbsent = new WeakSet<object>();
 
-// Check IDs each logger already reported as skipped; `null` stands for every record without a
-// readable ID. Holds IDs only, never values or payloads. The reload loop must not repeat a line.
+// SHA-256 digests of the check IDs each logger already reported as skipped; `null` stands for
+// every record without a readable ID. The reload loop must not repeat a line. A hostile API can
+// send any number of long IDs, so keys have a fixed size and the set is cleared when it is full.
 const warnedSkips = new WeakMap<object, Set<string | null>>();
+const MAX_WARNED_SKIPS = 10_000;
+
+function skipKey(id: string | null): string | null {
+  return id === null ? null : createHash("sha256").update(id).digest("hex");
+}
 
 /** Returns a logger for skip lines that writes once per key for this `log`. */
 function skipLogger(log: (message: string) => void): (key: string | null, message: string) => void {
@@ -187,8 +194,10 @@ function skipLogger(log: (message: string) => void): (key: string | null, messag
     warnedSkips.set(log, seen);
   }
   const keys = seen;
-  return (key, message) => {
+  return (id, message) => {
+    const key = skipKey(id);
     if (keys.has(key)) return;
+    if (keys.size >= MAX_WARNED_SKIPS) keys.clear();
     keys.add(key);
     log(message);
   };

@@ -804,3 +804,35 @@ test("loadChecks logs two skipped ids with one line each", async () => {
   await loadChecks("https://api", deps);
   assert.equal(logs.length, 2);
 });
+
+test("skip warnings keep bounded state for hostile ids", async () => {
+  const { heapStats } = await import("bun:jsc");
+  const heap = (): number => {
+    Bun.gc(true);
+    return heapStats().heapSize / 1048576;
+  };
+  const cases = [
+    {
+      name: "long ids",
+      count: 24,
+      ids: (i: number) => [String(i).padStart(8, "0") + "x".repeat(4_194_296)],
+    },
+    {
+      name: "many ids",
+      count: 3,
+      ids: (i: number) => Array.from({ length: 5000 }, (_, j) => `${i}-${j}-${"y".repeat(200)}`),
+    },
+  ];
+  for (const c of cases) {
+    const log = (): void => {};
+    const before = heap();
+    for (let i = 0; i < c.count; i++) {
+      const body = JSON.stringify(c.ids(i).map((id) => ({ id })));
+      const fakeFetch = (async () =>
+        new Response(body, { headers: { "x-pulse-contract": "1" } })) as unknown as typeof fetch;
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      assert.deepEqual(await loadChecks("http://api", { fetch: fakeFetch, log }), []);
+    }
+    assert.ok(heap() - before < 48, c.name);
+  }
+});
