@@ -51,6 +51,8 @@ function firstDelay(intervalMs: number, sample: number): number {
 export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Scheduler {
   let stopped = false;
   const entries = new Map<string, Entry>();
+  // Unsettled runs of removed or replaced entries by id, so a re-added check still waits.
+  const outstanding = new Map<string, Promise<void>>();
 
   const isCurrent = (entry: Entry): boolean => !stopped && entries.get(entry.check.id) === entry;
 
@@ -87,10 +89,18 @@ export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Sched
     if (entry.handle !== undefined) deps.timer.clearTimeout(entry.handle);
     entries.delete(id);
     entry.controller.abort();
+    const running = entry.running;
+    if (running !== undefined) {
+      outstanding.set(id, running);
+      void running.then(() => {
+        if (outstanding.get(id) === running) outstanding.delete(id);
+      });
+    }
     return entry;
   };
 
-  const add = (check: ProbeCheck, previous?: Promise<void>): void => {
+  const add = (check: ProbeCheck): void => {
+    const previous = outstanding.get(check.id);
     // Until its own run starts, the entry carries the old wait, so a further replacement
     // still waits for the oldest run that has not settled.
     const entry: Entry = { check, controller: new AbortController(), running: previous };
@@ -106,7 +116,8 @@ export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Sched
     for (const [id, check] of wanted) {
       const existing = entries.get(id);
       if (existing !== undefined && isDeepStrictEqual(existing.check, check)) continue;
-      add(check, remove(id)?.running);
+      remove(id);
+      add(check);
     }
   };
 

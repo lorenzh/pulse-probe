@@ -482,30 +482,32 @@ test("stop aborts the running check", async () => {
   assert.equal(seen?.aborted, true);
 });
 
-test("consecutive replacements all wait for the oldest unsettled run", async () => {
-  const f = fakeTimer();
-  const starts: string[] = [];
-  let release: () => void = () => undefined;
-  const s = startScheduler([{ ...check, intervalMs: 60000 }], {
-    timer: f.timer,
-    now: f.now,
-    random: () => 0,
-    run: async (c) => {
-      starts.push(c.name);
-      return mk(c);
-    },
-    onResult: async () => {
-      if (starts.length === 1) await new Promise<void>((r) => (release = r));
-    },
+for (const path of ["replacement chain", "removal and re-add"] as const) {
+  test(`a new entry waits for the oldest unsettled run of its id: ${path}`, async () => {
+    const f = fakeTimer();
+    const starts: string[] = [];
+    let release: () => void = () => undefined;
+    const s = startScheduler([{ ...check, intervalMs: 60000 }], {
+      timer: f.timer,
+      now: f.now,
+      random: () => 0,
+      run: async (c) => {
+        starts.push(c.name);
+        return mk(c);
+      },
+      onResult: async () => {
+        if (starts.length === 1) await new Promise<void>((r) => (release = r));
+      },
+    });
+    await f.advance(0);
+    s.sync(path === "replacement chain" ? [{ ...check, intervalMs: 60000, name: "B" }] : []);
+    await f.advance(5000);
+    s.sync([{ ...check, intervalMs: 60000, name: "C" }]);
+    await f.advance(5000);
+    assert.deepEqual(starts, ["A"]);
+    release();
+    await flush();
+    assert.deepEqual(starts, ["A", "C"]);
+    s.stop();
   });
-  await f.advance(0);
-  s.sync([{ ...check, intervalMs: 60000, name: "B" }]);
-  await f.advance(5000);
-  s.sync([{ ...check, intervalMs: 60000, name: "C" }]);
-  await f.advance(5000);
-  assert.deepEqual(starts, ["A"]);
-  release();
-  await flush();
-  assert.deepEqual(starts, ["A", "C"]);
-  s.stop();
-});
+}
