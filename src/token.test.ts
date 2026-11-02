@@ -130,6 +130,14 @@ test("a read error with an E code names the path and the code", () => {
   );
 });
 
+test("a directory as token file names the path and EISDIR", () => {
+  const r = failingReader(new FakeFsError(`EISDIR: ${SENTINEL}`, "EISDIR"));
+  assert.equal(
+    startupMessage(() => readProbeToken({ PULSE_PROBE_TOKEN_FILE: "/dir" }, r.read)),
+    "PULSE_PROBE_TOKEN_FILE=/dir: cannot read (EISDIR)",
+  );
+});
+
 for (const err of [
   new Error(`read failed: ${SENTINEL}`),
   new FakeFsError(SENTINEL, "not a code"),
