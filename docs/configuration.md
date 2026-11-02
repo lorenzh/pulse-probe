@@ -96,7 +96,7 @@ With `keyword` set, a 2xx answer is `up` only when its body contains the keyword
 
 ### Request options
 
-- `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`.
+- `method`: GET (default), HEAD, POST, PUT, PATCH, DELETE or OPTIONS. `body` is sent as written. There is no default `Content-Type`; set it in `headers`. Only GET and HEAD (and an omitted method) are retried; any other method makes one attempt, whatever `retries` says. A request with another method still runs at every scheduled run, so it can have side effects on the target each time.
 - `headers`: a value is a literal string or `{ "env": "NAME" }`. `NAME` must start with `PULSE_HEADER_` (case-sensitive); the probe never reads another variable for a header. The probe resolves `NAME` from its own process environment each time it loads the checks, so a secret lives in the probe environment and never in the API. The variable replaces the whole header value, so a bearer token needs the scheme in the variable (`PULSE_HEADER_SVC_TOKEN="Bearer <token>"`). If the variable is unset or empty, the probe skips that check and logs `skipping check <id>: header <Name> env NAME is not set` (names only). A value that is not a valid header value (for example one with a CR, LF or TAB) skips the check with `... env NAME is not a valid header value`. A name without the prefix skips the check with `... env NAME must start with PULSE_HEADER_`. Set the variable in every probe location. Literal header values and bodies are clear text in the checks file and in the api database; use `{ "env" }` for secrets. The probe always sends its own `User-Agent`.
 - A `{ "env" }` header is sent only to a host that `PULSE_PROBE_HEADER_HOSTS` binds the variable to; see [header host bindings](#header-host-bindings).
 - `expectedStatus` accepts codes and `"lo-hi"` ranges. The final status after redirects is judged.
@@ -184,7 +184,7 @@ HTTP checks with method `GET` or `HEAD` (also an omitted method), and TCP, DNS a
 - The result is that of the last attempt. Its `timestamp` is the start of the first attempt. `attempts` is the number of attempts made.
 - The probe stops retrying at shutdown, and early when the next attempt would start at or after the end of the check's interval.
 - TLS checks are not retried (`attempts` is 1).
-- HTTP checks with `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or any other method are not retried (`attempts` is 1, `retries` is ignored): a repeat could repeat the request's side effect. The configured method decides, so a `POST` that a 303 redirect turns into a `GET` is still not retried.
+- HTTP checks with `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or any other method are not retried (`attempts` is 1, `retries` is ignored): a repeat could repeat the request's side effect. The configured method decides, so a `POST` that a 303 redirect turns into a `GET` is still not retried. Even without retries, such a check sends its request at every scheduled run, so each run can have a side effect on the target.
 
 ### Schedule
 
