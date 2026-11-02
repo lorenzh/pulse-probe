@@ -167,8 +167,15 @@ async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> 
     );
     if (result.status !== "down" || attempt > retries) return result;
     if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
-    if (!(await waited(deps, retryDelayMs))) return result;
+    const isWaited = await waited(deps, retryDelayMs);
+    // Re-check here: an abort can land between waited() returning and this continuation.
+    if (!isWaited || isAborted(deps.signal)) return result;
   }
+}
+
+/** Reads the signal afresh, so the compiler keeps no narrowing from an earlier check. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 /** Sleeps the retry wait; false when the run was aborted during or right after it. */

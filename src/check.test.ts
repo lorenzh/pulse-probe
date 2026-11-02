@@ -641,6 +641,42 @@ test("aborting a GET during the retry wait ends the run after 1 fetch", async ()
   assert.equal(r.attempts, 1);
 });
 
+test("an abort that lands just after the retry sleep resolves starts no new attempt", async () => {
+  const schedules: { name: string; arm: (abort: () => void) => void }[] = [
+    { name: "inside sleep", arm: (abort) => abort() },
+    { name: "one microtask later", arm: (abort) => queueMicrotask(abort) },
+    { name: "two microtasks later", arm: (abort) => queueMicrotask(() => queueMicrotask(abort)) },
+  ];
+  for (const { name, arm } of schedules) {
+    const ctl = new AbortController();
+    let fetches = 0;
+    const r = await runCheck(
+      {
+        id: "a",
+        name: "A",
+        url: "http://check.test/",
+        intervalMs: 60_000,
+        timeoutMs: 60_000,
+        retries: 2,
+      },
+      {
+        ...deps,
+        fetch: async (): Promise<Response> => {
+          fetches++;
+          return new Response(null, { status: 500 });
+        },
+        sleep: async (): Promise<void> => {
+          arm(() => ctl.abort());
+        },
+        signal: ctl.signal,
+      },
+    );
+    assert.equal(fetches, 1, name);
+    assert.equal(r.attempts, 1, name);
+    assert.equal(r.statusCode, 500, name);
+  }
+});
+
 test("a run aborted on entry starts no work for any check type", async () => {
   const ctl = new AbortController();
   ctl.abort({ why: "shutdown" });
