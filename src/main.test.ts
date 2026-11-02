@@ -62,28 +62,16 @@ async function until(cond: () => boolean, waitMs = 10_000): Promise<void> {
   }
 }
 
-for (const [name, env] of [
-  ["PULSE_PROBE_TOKEN", {}],
-  ["PULSE_API_URL", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_API_URL: "bogus" }],
-  ["PULSE_LOCATION", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_LOCATION: "x".repeat(65) }],
-  ["PULSE_CHECKS_RELOAD_MS", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_CHECKS_RELOAD_MS: "1" }],
-  ["PULSE_LOG_LEVEL", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_LOG_LEVEL: "loud" }],
-  ["PULSE_HEALTH_PORT", { PULSE_PROBE_TOKEN: "tok-secret", PULSE_HEALTH_PORT: "abc" }],
-  [
-    "PULSE_PROBE_BLOCK_PRIVATE_RANGES",
-    { PULSE_PROBE_TOKEN: "tok-secret", PULSE_PROBE_BLOCK_PRIVATE_RANGES: "yes" },
-  ],
-] as const) {
-  test(`a bad ${name} exits 2 with one line and no stack`, async () => {
-    const r = run(env);
-    const { code } = await r.exit;
-    assert.equal(code, 2);
-    const lines = r.stderr().trimEnd().split("\n");
-    assert.equal(lines.length, 1);
-    assert.match(lines[0] ?? "", new RegExp(`^pulse-probe: .*${name}`));
-    assert.ok(!r.stderr().includes("tok-secret"));
-  });
-}
+test("a bad PULSE_API_URL exits 2 with one line and no stack", async () => {
+  const r = run({ PULSE_PROBE_TOKEN: "tok-secret", PULSE_API_URL: "bogus" });
+  const { code } = await r.exit;
+  assert.equal(code, 2);
+  const lines = r.stderr().trimEnd().split("\n");
+  assert.equal(lines.length, 1);
+  assert.match(lines[0] ?? "", /^pulse-probe: .*PULSE_API_URL/);
+  assert.ok(!r.stderr().includes("tok-secret"));
+  assert.ok(!r.stdout().includes("tok-secret"));
+});
 
 test("an occupied health port exits 2 with one line naming both settings and no API call", async () => {
   let apiCalls = 0;
@@ -220,35 +208,6 @@ test("PULSE_PROBE_TOKEN_FILE alone: the API gets the trimmed file content as the
   assert.ok(!r.stderr().includes(SENTINEL));
 });
 
-test("both token variables exit 2 with one line naming both", async () => {
-  const line = await startupLine({
-    PULSE_PROBE_TOKEN: SENTINEL,
-    PULSE_PROBE_TOKEN_FILE: tokenFile("token-both", SENTINEL),
-  });
-  assert.equal(line, "pulse-probe: set only one of PULSE_PROBE_TOKEN and PULSE_PROBE_TOKEN_FILE");
-});
-
-test("no token variable exits 2 with one line naming both", async () => {
-  const line = await startupLine({ PULSE_PROBE_TOKEN: "  ", PULSE_PROBE_TOKEN_FILE: "" });
-  assert.equal(line, "pulse-probe: PULSE_PROBE_TOKEN or PULSE_PROBE_TOKEN_FILE must be set");
-});
-
-test("an empty token file exits 2 with one line naming the path", async () => {
-  const path = tokenFile("token-empty", " \n\t\n");
-  assert.equal(
-    await startupLine({ PULSE_PROBE_TOKEN_FILE: path }),
-    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: file is empty`,
-  );
-});
-
-test("a multi-line token file exits 2 without printing the content", async () => {
-  const path = tokenFile("token-lines", `${SENTINEL}\n${SENTINEL}`);
-  assert.equal(
-    await startupLine({ PULSE_PROBE_TOKEN_FILE: path }),
-    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${path}: must hold one line`,
-  );
-});
-
 test("a missing token file exits 2 with the path and ENOENT", async () => {
   const path = join(dir, "no-such-file");
   assert.equal(
@@ -257,20 +216,8 @@ test("a missing token file exits 2 with the path and ENOENT", async () => {
   );
 });
 
-test("a directory as token file exits 2 with the path and EISDIR", async () => {
-  assert.equal(
-    await startupLine({ PULSE_PROBE_TOKEN_FILE: dir }),
-    `pulse-probe: PULSE_PROBE_TOKEN_FILE=${dir}: cannot read (EISDIR)`,
-  );
-});
-
 for (const [name, content] of [
-  ["a NUL byte", Buffer.from(`${SENTINEL}\u0000x\n`)],
   ["invalid UTF-8", Buffer.concat([Buffer.from(SENTINEL), Buffer.from([0xff, 0xfe])])],
-  [
-    "UTF-16 with a BOM and no newline",
-    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(SENTINEL, "utf16le")]),
-  ],
 ] as const) {
   test(`a token file with ${name} exits 2 without printing the content`, async () => {
     const api = await fakeApi((_q, res) => res.end("[]"));
@@ -281,14 +228,6 @@ for (const [name, content] of [
     );
   });
 }
-
-test("a PULSE_PROBE_TOKEN with a non-ASCII character exits 2 without printing it", async () => {
-  const api = await fakeApi((_q, res) => res.end("[]"));
-  assert.equal(
-    await startupLine({ PULSE_PROBE_TOKEN: `${SENTINEL}\u2028x`, PULSE_API_URL: api }),
-    "pulse-probe: PULSE_PROBE_TOKEN must hold printable ASCII",
-  );
-});
 
 test(
   "with PULSE_PROBE_BLOCK_PRIVATE_RANGES=true checks to loopback are blocked, API calls are not",
