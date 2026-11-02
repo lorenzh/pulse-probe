@@ -12,7 +12,7 @@ These are all the variables the code reads (`src/main.ts`).
 | `PULSE_PROBE_TOKEN_FILE`           | unset                   | File whose trimmed content is the token. Set exactly one of `PULSE_PROBE_TOKEN` and `PULSE_PROBE_TOKEN_FILE`; see [probe token](#probe-token).                                                                                                              |
 | `PULSE_CHECKS_RELOAD_MS`           | `60000`                 | How often the probe reloads the checks from pulse-api, in ms. Integer, 5000 to 2147483647.                                                                                                                                                                  |
 | `PULSE_BUFFER_MAX_RESULTS`         | `10000`                 | Most results the probe keeps while pulse-api cannot be reached. Integer, 1 to 2147483647.                                                                                                                                                                   |
-| `PULSE_BUFFER_MAX_AGE_MS`          | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 2147483647. Keep it below the 7 days after which pulse-api answers 400.                                                                                                      |
+| `PULSE_BUFFER_MAX_AGE_MS`          | `3600000` (1 h)         | Oldest result the probe still delivers, by its timestamp, in ms. Integer, 1 to 604800000 (7 days, the age after which pulse-api answers 400). A larger value stops startup.                                                                                 |
 | `PULSE_LOG_LEVEL`                  | `info`                  | `debug`, `info`, `warn` or `error`. Any other value is a startup error.                                                                                                                                                                                     |
 | `PULSE_HEALTH_PORT`                | unset (no listener)     | Port of the optional health and metrics listener, 0 to 65535. The Docker image sets 9100; its healthcheck follows the variable.                                                                                                                             |
 | `PULSE_HEALTH_HOST`                | `127.0.0.1`             | Address the listener binds to. The Docker image sets `0.0.0.0`.                                                                                                                                                                                             |
@@ -177,13 +177,14 @@ A check with `type: "heartbeat"` is never run by the probe. Jobs ping the API, a
 
 ### Retries
 
-HTTP, TCP, DNS and domain checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs` is an integer 0..60000 (default 1000).
+HTTP checks with method `GET` or `HEAD` (also an omitted method), and TCP, DNS and domain checks retry. `retries` is an integer 0..10 (default 0). `retryDelayMs` is an integer 0..60000 (default 1000).
 
 - A failed attempt (non-2xx, timeout, refused connection, failed lookup or network error) is repeated up to `retries` times, waiting `retryDelayMs` between attempts.
 - The first success (`up` or `degraded`) stops the loop.
 - The result is that of the last attempt. Its `timestamp` is the start of the first attempt. `attempts` is the number of attempts made.
 - The probe stops retrying at shutdown, and early when the next attempt would start at or after the end of the check's interval.
 - TLS checks are not retried (`attempts` is 1).
+- HTTP checks with `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or any other method are not retried (`attempts` is 1, `retries` is ignored): a repeat could repeat the request's side effect. The configured method decides, so a `POST` that a 303 redirect turns into a `GET` is still not retried.
 
 ### Schedule
 

@@ -2,6 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import type { HttpMethod } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
@@ -550,4 +551,72 @@ test("the latency objective compares the rounded latency", async () => {
     [above.status, above.latencyMs, above.reason],
     ["degraded", 501, "latency 501ms over objective 500ms"],
   );
+});
+
+interface RetryRun {
+  fetches: string[];
+  sleeps: number[];
+  attempts: number;
+}
+
+/** Runs an HTTP check against a fake fetch that answers `answer(hop)`; nothing reaches the network. */
+async function runRetry(
+  method: HttpMethod | undefined,
+  answer: (hop: number) => Response,
+): Promise<RetryRun> {
+  const fetches: string[] = [];
+  const sleeps: number[] = [];
+  const fakeFetch = async (
+    _input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    fetches.push(init?.method ?? "GET");
+    return answer(fetches.length);
+  };
+  const r = await runCheck(
+    {
+      id: "a",
+      name: "A",
+      url: "http://example.test/",
+      intervalMs: 100_000,
+      retries: 3,
+      retryDelayMs: 10,
+      ...(method !== undefined ? { method } : {}),
+    },
+    {
+      fetch: fakeFetch,
+      now,
+      monotonic: now,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+      },
+      location: "default",
+    },
+  );
+  return { fetches, sleeps, attempts: r.attempts };
+}
+
+const fail = (): Response => new Response(null, { status: 500 });
+
+for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const) {
+  test(`retries: ${method} makes one attempt without sleep`, async () => {
+    const run = await runRetry(method, fail);
+    assert.deepEqual(run, { fetches: [method], sleeps: [], attempts: 1 });
+  });
+}
+
+for (const method of ["GET", "HEAD", undefined] as const) {
+  test(`retries: ${method ?? "omitted method"} uses the retry budget`, async () => {
+    const run = await runRetry(method, fail);
+    assert.equal(run.fetches.length, 4);
+    assert.deepEqual(run.sleeps, [10, 10, 10]);
+    assert.equal(run.attempts, 4);
+  });
+}
+
+test("retries: POST redirected by 303 to a failing GET is not retried", async () => {
+  const run = await runRetry("POST", (hop) =>
+    hop === 1 ? new Response(null, { status: 303, headers: { location: "/next" } }) : fail(),
+  );
+  assert.deepEqual(run, { fetches: ["POST", "GET"], sleeps: [], attempts: 1 });
 });

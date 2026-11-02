@@ -148,7 +148,7 @@ async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> 
     ...(certDaysLeft !== undefined ? { certDaysLeft } : {}),
   });
   if (check.type === "tls") return runTlsCheck(check, deps, timeoutMs, finish);
-  const retries = check.retries ?? 0;
+  const retries = isRetryable(check) ? (check.retries ?? 0) : 0;
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? startMono : deps.monotonic();
@@ -160,6 +160,16 @@ async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> 
     if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
     await deps.sleep(retryDelayMs);
   }
+}
+
+/**
+ * HTTP checks retry only for GET and HEAD, judged by the configured method before any redirect:
+ * repeating another method can repeat its side effect. Other check types always retry.
+ */
+function isRetryable(check: Exclude<ProbeCheck, TlsCheck>): boolean {
+  if (check.type !== "http" && check.type !== undefined) return true;
+  const method = check.method ?? "GET";
+  return method === "GET" || method === "HEAD";
 }
 
 type Done = (
