@@ -30,7 +30,7 @@ interface Entry {
   controller: AbortController;
   handle?: unknown;
   /** Settles when the entry's current run, including `onResult`, is over. */
-  running?: Promise<void>;
+  running?: Promise<void> | undefined;
 }
 
 const MAX_FIRST_DELAY_MS = 1000;
@@ -91,7 +91,9 @@ export function startScheduler(checks: ProbeCheck[], deps: SchedulerDeps): Sched
   };
 
   const add = (check: ProbeCheck, previous?: Promise<void>): void => {
-    const entry: Entry = { check, controller: new AbortController() };
+    // Until its own run starts, the entry carries the old wait, so a further replacement
+    // still waits for the oldest run that has not settled.
+    const entry: Entry = { check, controller: new AbortController(), running: previous };
     entries.set(check.id, entry);
     const delay = firstDelay(check.intervalMs, deps.random());
     entry.handle = deps.timer.setTimeout(() => tick(entry, previous), delay);
