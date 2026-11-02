@@ -37,7 +37,12 @@ interface Run {
 
 function run(env: Record<string, string>): Run {
   const child = spawn(process.execPath, [MAIN], {
-    env: { PATH: process.env.PATH ?? "", ...env },
+    // A shared transpiler cache lets each child skip re-transpiling main.ts.
+    env: {
+      PATH: process.env.PATH ?? "",
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(dir, "bun-cache"),
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
