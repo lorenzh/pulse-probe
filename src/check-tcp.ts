@@ -15,6 +15,10 @@ export type TcpConnect = (options: TcpConnectOptions) => Promise<void>;
 
 export const tcpConnect: TcpConnect = ({ host, port, signal }) =>
   new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
     const socket = connect({ host, port });
     const onAbort = (): void => {
       socket.destroy();

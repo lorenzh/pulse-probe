@@ -11,6 +11,7 @@ import {
   postResult,
   StartupAbortedError,
 } from "./client.ts";
+import { parseHeaderHosts } from "./header-hosts.ts";
 
 const result: Result = {
   checkId: "a",
@@ -715,5 +716,118 @@ test("capped and quoted reasons are posted as they are", async () => {
     );
   } finally {
     await api.stop(true);
+  }
+});
+
+const SKIP_SENTINEL = "Bearer skip-sentinel-9f2";
+const skipHosts = parseHeaderHosts('{"PULSE_HEADER_SKIP":["svc.test"]}');
+const skipOk = { id: "ok", name: "OK", url: "https://svc.test/", intervalMs: 1000 };
+const skipBad = { id: "bad", name: "Bad", url: "https://svc.test/", intervalMs: 0 };
+const skipNoId = { name: "NoId", url: "https://svc.test/", intervalMs: 1000 };
+const skipHdr = {
+  id: "hdr",
+  name: "Hdr",
+  url: "https://svc.test/",
+  intervalMs: 1000,
+  headers: { Authorization: { env: "PULSE_HEADER_SKIP" } },
+};
+
+/** A fake api whose `GET /checks` answers the current `list`. */
+function skipApi(list: { value: unknown[] }): typeof fetch {
+  return (async () =>
+    Response.json(list.value, { headers: { "x-pulse-contract": "1" } })) as unknown as typeof fetch;
+}
+
+test("loadChecks logs each skipped check once per logger across reloads", async () => {
+  const logs: string[] = [];
+  const log = (m: string): void => {
+    logs.push(m);
+  };
+  const env: Record<string, string | undefined> = {};
+  const list = { value: [skipBad, skipHdr, skipNoId, skipOk] as unknown[] };
+  const deps = { fetch: skipApi(list), log, env, headerHosts: skipHosts };
+  for (let i = 0; i < 3; i++) {
+    const checks = await loadChecks("https://api", deps);
+    assert.deepEqual(
+      checks.map((c) => c.id),
+      ["ok"],
+    );
+  }
+  assert.deepEqual(logs, [
+    "skipping invalid check bad: checks[0].intervalMs: must be an integer 1..2147483647",
+    "skipping check hdr: header Authorization env PULSE_HEADER_SKIP is not set",
+    "skipping invalid check: checks[2].id: is required",
+  ]);
+
+  env.PULSE_HEADER_SKIP = SKIP_SENTINEL;
+  const recovered = await loadChecks("https://api", deps);
+  assert.deepEqual(
+    recovered.map((c) => c.id),
+    ["hdr", "ok"],
+  );
+  delete env.PULSE_HEADER_SKIP;
+  assert.deepEqual(
+    (await loadChecks("https://api", deps)).map((c) => c.id),
+    ["ok"],
+  );
+  // The same ID through the other skip path, reordered, and a second ID-less record stay quiet.
+  list.value = [
+    skipOk,
+    { ...skipHdr, intervalMs: 0 },
+    skipNoId,
+    { ...skipNoId, name: "B" },
+    skipBad,
+  ];
+  assert.deepEqual(
+    (await loadChecks("https://api", deps)).map((c) => c.id),
+    ["ok"],
+  );
+  assert.equal(logs.length, 3);
+
+  const fresh: string[] = [];
+  list.value = [skipBad, skipHdr, skipNoId, skipOk];
+  await loadChecks("https://api", { ...deps, log: (m) => fresh.push(m) });
+  assert.equal(fresh.length, 3);
+  for (const line of [...logs, ...fresh]) assert.equal(line.includes("skip-sentinel"), false);
+});
+
+test("loadChecks logs two skipped ids with one line each", async () => {
+  const logs: string[] = [];
+  const list = {
+    value: [
+      { ...skipBad, id: "a" },
+      { ...skipBad, id: "b" },
+    ] as unknown[],
+  };
+  const deps = { fetch: skipApi(list), log: (m: string) => logs.push(m) };
+  await loadChecks("https://api", deps);
+  await loadChecks("https://api", deps);
+  assert.equal(logs.length, 2);
+});
+
+test("skip warnings keep bounded state for hostile ids", async () => {
+  const { heapStats } = await import("bun:jsc");
+  const heap = (): number => {
+    Bun.gc(true);
+    return heapStats().heapSize / 1048576;
+  };
+  const cases = [
+    {
+      name: "long ids",
+      count: 16,
+      ids: (i: number) => [String(i).padStart(8, "0") + "x".repeat(1_048_568)],
+    },
+  ];
+  for (const c of cases) {
+    const log = (): void => {};
+    const before = heap();
+    for (let i = 0; i < c.count; i++) {
+      const body = JSON.stringify(c.ids(i).map((id) => ({ id })));
+      const fakeFetch = (async () =>
+        new Response(body, { headers: { "x-pulse-contract": "1" } })) as unknown as typeof fetch;
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- fake URL for a stubbed fetch, no network
+      assert.deepEqual(await loadChecks("http://api", { fetch: fakeFetch, log }), []);
+    }
+    assert.ok(heap() - before < 6, c.name);
   }
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type Check,
   checkWireVersion,
@@ -175,6 +176,33 @@ function resolveHeaders(
 // Loggers that already reported a missing version header: the reload loop must not repeat it.
 const warnedAbsent = new WeakSet<object>();
 
+// SHA-256 digests of the check IDs each logger already reported as skipped; `null` stands for
+// every record without a readable ID. The reload loop must not repeat a line. A hostile API can
+// send any number of long IDs, so keys have a fixed size and the set is cleared when it is full.
+const warnedSkips = new WeakMap<object, Set<string | null>>();
+const MAX_WARNED_SKIPS = 10_000;
+
+function skipKey(id: string | null): string | null {
+  return id === null ? null : createHash("sha256").update(id).digest("hex");
+}
+
+/** Returns a logger for skip lines that writes once per key for this `log`. */
+function skipLogger(log: (message: string) => void): (key: string | null, message: string) => void {
+  let seen = warnedSkips.get(log);
+  if (seen === undefined) {
+    seen = new Set();
+    warnedSkips.set(log, seen);
+  }
+  const keys = seen;
+  return (id, message) => {
+    const key = skipKey(id);
+    if (keys.has(key)) return;
+    if (keys.size >= MAX_WARNED_SKIPS) keys.clear();
+    keys.add(key);
+    log(message);
+  };
+}
+
 /** Maps a typed client error to the error `loadChecks` throws. */
 function toError(error: FetchJsonError): Error {
   switch (error.kind) {
@@ -201,11 +229,22 @@ function toError(error: FetchJsonError): Error {
   }
 }
 
-/** Returns " <id>" when `raw` is an object with a string id, else an empty string. */
-function readableId(raw: unknown): string {
-  if (typeof raw !== "object" || raw === null) return "";
+/** Returns the id when `raw` is an object with a string id, else `null`. */
+function readableId(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
   const id = (raw as { id?: unknown }).id;
-  return typeof id === "string" ? ` ${id}` : "";
+  return typeof id === "string" ? id : null;
+}
+
+/** Logs the skip line of an invalid record, keyed by its readable id. */
+function logInvalid(
+  raw: unknown,
+  error: string,
+  logSkip: (key: string | null, message: string) => void,
+): void {
+  const id = readableId(raw);
+  const named = id === null ? "" : ` ${id}`;
+  logSkip(id, `skipping invalid check${named}: ${error}`);
 }
 
 /**
@@ -217,6 +256,7 @@ function withResolvedHeaders(
   env: Record<string, string | undefined>,
   headerHosts: HeaderHosts,
   log: (message: string) => void,
+  logSkip: (key: string | null, message: string) => void,
 ): ProbeCheck | undefined {
   const check = toCheck(parsed);
   if (parsed.type === "tls" || check.type === "tls" || parsed.headers === undefined) return check;
@@ -227,7 +267,8 @@ function withResolvedHeaders(
     return check;
   }
   if (!headers.ok) {
-    log(
+    logSkip(
+      check.id,
       `skipping check ${check.id}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
     );
     return undefined;
@@ -255,7 +296,7 @@ async function requestChecks(
 
 /**
  * Fetches the checks once. The timeout covers the headers and the body.
- * Invalid checks are skipped and logged. Heartbeat checks are dropped silently. Throws when the request fails.
+ * Invalid checks are skipped and logged once per check ID and logger. Heartbeat checks are dropped silently. Throws when the request fails.
  */
 export async function loadChecks(
   baseUrl: string,
@@ -283,16 +324,18 @@ export async function loadChecks(
   }
   if (!res.ok) throw toError(res.error);
   const checks: ProbeCheck[] = [];
+  const logSkip = skipLogger(deps.log);
   for (const [i, raw] of res.value.entries()) {
     const parsed = validateCheck(raw, `checks[${i}]`);
     // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
-    if (!parsed.ok) deps.log(`skipping invalid check${readableId(raw)}: ${parsed.error}`);
+    if (!parsed.ok) logInvalid(raw, parsed.error, logSkip);
     else if (parsed.value.type !== "heartbeat") {
       const check = withResolvedHeaders(
         parsed.value,
         deps.env ?? {},
         deps.headerHosts ?? new Map(),
         deps.log,
+        logSkip,
       );
       if (check !== undefined) checks.push(check);
     }

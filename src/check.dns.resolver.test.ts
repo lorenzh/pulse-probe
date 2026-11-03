@@ -127,3 +127,30 @@ test("resolveRecords gives up after its own timeout", async () => {
     s.close();
   }
 });
+
+test("default resolveRecords with an aborted signal rejects with its reason and sends no query", async () => {
+  let queries = 0;
+  const socket = dgram.createSocket("udp4");
+  socket.on("message", () => {
+    queries++;
+  });
+  await new Promise<void>((r) => socket.bind(0, "127.0.0.1", r));
+  const ctl = new AbortController();
+  const reason = { why: "shutdown" };
+  ctl.abort(reason);
+  try {
+    await assert.rejects(
+      resolveRecords({
+        dnsName: "check.test",
+        recordType: "A",
+        resolver: `127.0.0.1:${(socket.address() as AddressInfo).port}`,
+        timeoutMs: 60_000,
+        signal: ctl.signal,
+      }),
+      (err: unknown) => err === reason,
+    );
+  } finally {
+    await new Promise<void>((r) => socket.close(() => r()));
+  }
+  assert.equal(queries, 0);
+});

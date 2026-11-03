@@ -10,7 +10,7 @@ import {
 } from "@lorenzh/pulse-contract";
 import { BlockedAddressError, isRecord } from "@lorenzh/pulse-kit";
 import { blockedReason } from "./address-policy.ts";
-import { type Attempt, DAY_MS, errorCode, errorReason } from "./attempt.ts";
+import { type Attempt, attemptSignal, DAY_MS, errorCode, errorReason } from "./attempt.ts";
 import { attemptDns, type Resolve, resolveRecords } from "./check-dns.ts";
 import { attemptDomain } from "./check-domain.ts";
 import { attemptTcp, type TcpConnect, tcpConnect } from "./check-tcp.ts";
@@ -34,6 +34,8 @@ export interface TlsConnectOptions {
   timeoutMs: number;
   /** SNI name. Defaults to `host` when it is not an IP literal. */
   servername?: string;
+  /** Ends the connect early, on top of `timeoutMs`; aborted on entry, no socket is opened. */
+  signal?: AbortSignal;
 }
 
 /** Connects, completes the handshake and returns the leaf certificate's `valid_to` (epoch ms). */
@@ -43,9 +45,13 @@ export type TlsConnect = (options: TlsConnectOptions) => Promise<{ validTo: numb
  * Reads the leaf certificate of a TLS endpoint. The chain and the hostname are not
  * verified (`rejectUnauthorized: false`); `timeoutMs` bounds connect plus handshake.
  */
-export const tlsConnect: TlsConnect = ({ host, port, timeoutMs, servername }) =>
+export const tlsConnect: TlsConnect = ({ host, port, timeoutMs, servername, signal: outer }) =>
   new Promise((resolve, reject) => {
-    const signal = AbortSignal.timeout(timeoutMs);
+    if (outer?.aborted === true) {
+      reject(outer.reason);
+      return;
+    }
+    const signal = attemptSignal(timeoutMs, outer);
     const socket = tls.connect({
       host,
       port,
@@ -85,8 +91,8 @@ export interface CheckDeps {
   now: () => number;
   /** Monotonic clock (ms): latency and the retry budget. It never steps back. */
   monotonic: () => number;
-  /** Waits `ms` milliseconds between attempts. */
-  sleep: (ms: number) => Promise<void>;
+  /** Waits `ms` milliseconds between attempts; rejects early when `signal` aborts. */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Probe location name, set on every result. */
   location: string;
   /** Defaults to a real TCP connection. */
@@ -95,8 +101,10 @@ export interface CheckDeps {
   resolve?: Resolve;
   /** RDAP bootstrap file of domain checks. Defaults to the IANA file. */
   rdapBootstrapUrl?: string;
-  /** Aborts in-flight requests, connections and lookups, for shutdown. */
+  /** Ends this run: aborts its in-flight request, connection or lookup and its retry wait. */
   signal?: AbortSignal;
+  /** Process lifetime, used only for work shared between runs (the RDAP bootstrap fetch). */
+  shutdown?: AbortSignal;
 }
 
 /**
@@ -147,8 +155,10 @@ async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> 
     attempts,
     ...(certDaysLeft !== undefined ? { certDaysLeft } : {}),
   });
+  // An aborted run starts no request, socket or lookup; it maps like any other abort.
+  if (deps.signal?.aborted === true) return finish("down", null, `timeout after ${timeoutMs}ms`);
   if (check.type === "tls") return runTlsCheck(check, deps, timeoutMs, finish);
-  const retries = check.retries ?? 0;
+  const retries = isRetryable(check) ? (check.retries ?? 0) : 0;
   const retryDelayMs = check.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   for (let attempt = 1; ; attempt++) {
     const attemptStart = attempt === 1 ? startMono : deps.monotonic();
@@ -156,10 +166,37 @@ async function runAttempts(check: ProbeCheck, deps: CheckDeps): Promise<Result> 
       finish(status, code, reason, certDaysLeft, attempt, attemptStart),
     );
     if (result.status !== "down" || attempt > retries) return result;
-    if (deps.signal?.aborted === true) return result;
     if (deps.monotonic() + retryDelayMs >= startMono + check.intervalMs) return result;
-    await deps.sleep(retryDelayMs);
+    const isWaited = await waited(deps, retryDelayMs);
+    // Re-check here: an abort can land between waited() returning and this continuation.
+    if (!isWaited || isAborted(deps.signal)) return result;
   }
+}
+
+/** Reads the signal afresh, so the compiler keeps no narrowing from an earlier check. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/** Sleeps the retry wait; false when the run was aborted during or right after it. */
+async function waited(deps: CheckDeps, ms: number): Promise<boolean> {
+  try {
+    await deps.sleep(ms, deps.signal);
+  } catch (err) {
+    if (deps.signal?.aborted === true) return false;
+    throw err;
+  }
+  return deps.signal?.aborted !== true;
+}
+
+/**
+ * HTTP checks retry only for GET and HEAD, judged by the configured method before any redirect:
+ * repeating another method can repeat its side effect. Other check types always retry.
+ */
+function isRetryable(check: Exclude<ProbeCheck, TlsCheck>): boolean {
+  if (check.type !== "http" && check.type !== undefined) return true;
+  const method = check.method ?? "GET";
+  return method === "GET" || method === "HEAD";
 }
 
 type Done = (
@@ -191,6 +228,7 @@ function runAttempt(
         monotonic: deps.monotonic,
         ...(deps.rdapBootstrapUrl !== undefined ? { bootstrapUrl: deps.rdapBootstrapUrl } : {}),
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+        ...(deps.shutdown !== undefined ? { shutdown: deps.shutdown } : {}),
       }).then((a) => fromAttempt(a, done));
     case "http":
     case undefined:
@@ -361,7 +399,7 @@ async function attemptHttp(
     await res.body?.cancel().catch(() => {});
     return done("up", res.status, null);
   } catch (err) {
-    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    if (isAbort(err, deps.signal)) {
       return done("down", null, `timeout after ${timeoutMs}ms`);
     }
     // A fetch error message can quote a header value or the body, so only the code is used.
@@ -455,6 +493,7 @@ async function sendHop(
   method: string,
   signal: AbortSignal,
 ): Promise<Response | BlockedAddressError> {
+  signal.throwIfAborted();
   try {
     return await deps.fetch(url, {
       method,
@@ -536,6 +575,7 @@ async function runTlsCheck(
       host: check.host,
       port: check.port,
       timeoutMs,
+      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     });
     const now = deps.now();
     const daysLeft = Math.floor((validTo - now) / DAY_MS);
@@ -545,7 +585,7 @@ async function runTlsCheck(
     }
     return finish("up", null, null, daysLeft);
   } catch (err) {
-    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    if (isAbort(err, deps.signal)) {
       return finish("down", null, `timeout after ${timeoutMs}ms`, null);
     }
     if (err instanceof BlockedAddressError) {
@@ -553,4 +593,10 @@ async function runTlsCheck(
     }
     return finish("down", null, errorReason(err), null);
   }
+}
+
+/** A timeout, an abort error, or any rejection after the run signal aborted (its own reason). */
+function isAbort(err: unknown, signal: AbortSignal | undefined): boolean {
+  if (signal?.aborted === true) return true;
+  return err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
 }

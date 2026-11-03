@@ -53,18 +53,19 @@ const mk = (c: ProbeCheck): Result => ({
   attempts: 1,
 });
 
-test("runs immediately, then every interval", async () => {
+test("runs after the first delay, then every interval", async () => {
   const f = fakeTimer();
   const results: Result[] = [];
   const s = startScheduler([check], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => mk(c),
     onResult: (r) => {
       results.push(r);
     },
   });
-  await flush();
+  await f.advance(0);
   assert.equal(results.length, 1);
   await f.advance(999);
   assert.equal(results.length, 1);
@@ -84,6 +85,7 @@ test("a slow check does not overlap with itself", async () => {
   const s = startScheduler([check], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => {
       calls++;
       active++;
@@ -94,11 +96,11 @@ test("a slow check does not overlap with itself", async () => {
     },
     onResult: () => {},
   });
-  await flush();
+  await f.advance(0);
   await f.advance(3500);
   assert.equal(calls, 1);
   releases[0]!();
-  await flush();
+  await f.advance(0);
   // finished late: next run is due immediately
   await f.advance(0);
   assert.equal(calls, 2);
@@ -112,10 +114,11 @@ test("stop cancels future runs", async () => {
   const s = startScheduler([check], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => (calls++, mk(c)),
     onResult: () => {},
   });
-  await flush();
+  await f.advance(0);
   assert.equal(f.pending.size, 1);
   s.stop();
   assert.equal(f.pending.size, 0);
@@ -130,6 +133,7 @@ test("errors are reported and scheduling continues", async () => {
   const s = startScheduler([check], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async () => {
       calls++;
       throw new Error("boom");
@@ -137,7 +141,7 @@ test("errors are reported and scheduling continues", async () => {
     onResult: () => {},
     onError: (_c, e) => errors.push(e),
   });
-  await flush();
+  await f.advance(0);
   await f.advance(1000);
   assert.equal(calls, 2);
   assert.equal(errors.length, 2);
@@ -152,6 +156,7 @@ test("the next run is armed only after a retrying run finished", async () => {
   const s = startScheduler([retrying], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => {
       calls++;
       // first attempt fails, the fake sleep holds the run open
@@ -160,14 +165,14 @@ test("the next run is armed only after a retrying run finished", async () => {
     },
     onResult: () => {},
   });
-  await flush();
+  await f.advance(0);
   assert.equal(calls, 1);
   assert.equal(f.pending.size, 0);
   await f.advance(900);
   assert.equal(calls, 1);
   assert.equal(f.pending.size, 0);
   waits[0]!();
-  await flush();
+  await f.advance(0);
   assert.equal(f.pending.size, 1);
   s.stop();
 });
@@ -178,17 +183,18 @@ test("sync adds, removes and changes checks and keeps unchanged timers", async (
   const s = startScheduler([check, { ...check, id: "b" }], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => {
       runs.push(`${c.id}:${c.intervalMs}`);
       return mk(c);
     },
     onResult: () => {},
   });
-  await flush();
+  await f.advance(0);
   assert.deepEqual(runs, ["a:1000", "b:1000"]);
   const timersBefore = [...f.pending.keys()];
   s.sync([check, { ...check, id: "c" }]);
-  await flush();
+  await f.advance(0);
   assert.deepEqual(runs, ["a:1000", "b:1000", "c:1000"]);
   assert.ok(timersBefore.some((id) => f.pending.has(id)));
   await f.advance(1000);
@@ -200,7 +206,7 @@ test("sync adds, removes and changes checks and keeps unchanged timers", async (
     { ...check, intervalMs: 500 },
     { ...check, id: "c" },
   ]);
-  await flush();
+  await f.advance(0);
   assert.equal(runs.at(-1), "a:500");
   assert.equal(f.pending.size, 2);
   s.stop();
@@ -213,6 +219,7 @@ test("a removed check mid-run never posts", async () => {
   const s = startScheduler([check], {
     timer: f.timer,
     now: f.now,
+    random: () => 0,
     run: (c) =>
       new Promise((resolve) => {
         release = () => resolve(mk(c));
@@ -221,10 +228,10 @@ test("a removed check mid-run never posts", async () => {
       posted.push(r.checkId);
     },
   });
-  await flush();
+  await f.advance(0);
   s.sync([]);
   release();
-  await flush();
+  await f.advance(0);
   assert.deepEqual(posted, []);
   assert.equal(f.pending.size, 0);
 });
@@ -237,6 +244,7 @@ test("a wall clock step back does not pause the scheduler", async () => {
     let runs = 0;
     const s = startCheckScheduler([check], {
       timer: f.timer,
+      random: () => 0,
       fetch: async () => {
         runs++;
         const before = Date.now();
@@ -253,7 +261,7 @@ test("a wall clock step back does not pause the scheduler", async () => {
         throw err;
       },
     });
-    await flush();
+    await f.advance(0);
     await f.advance(1000);
     await f.advance(1000);
     assert.equal(runs, 3);
@@ -277,16 +285,229 @@ test("never passes a delay above the timer cap", async () => {
   const s = startScheduler([{ ...check, intervalMs: 2 ** 31 + 5 }], {
     timer,
     now: f.now,
+    random: () => 0,
     run: async (c) => {
       runs.push(c.id);
       return mk(c);
     },
     onResult: () => undefined,
   });
-  await flush();
+  await f.advance(0);
   assert.equal(runs.length, 1);
-  assert.deepEqual(delays, [2_147_483_647]);
+  assert.deepEqual(delays, [0, 2_147_483_647]);
   await f.advance(1000);
   assert.equal(runs.length, 1);
   s.stop();
 });
+
+function samples(...values: number[]): { random: () => number; calls: () => number } {
+  let i = 0;
+  return {
+    random: () => {
+      const v = values[i % values.length] ?? 0;
+      i++;
+      return v;
+    },
+    calls: () => i,
+  };
+}
+
+test("each new check starts after floor(random * min(interval, 1000)) ms", async () => {
+  const f = fakeTimer();
+  const starts: string[] = [];
+  const r = samples(0, 0.5, 0.999);
+  const s = startScheduler(
+    [check, { ...check, id: "b" }, { ...check, id: "c" }].map((c) => ({
+      ...c,
+      intervalMs: 60_000,
+    })),
+    {
+      timer: f.timer,
+      now: f.now,
+      random: r.random,
+      run: async (c) => {
+        starts.push(`${c.id}@${f.now()}`);
+        return mk(c);
+      },
+      onResult: () => {},
+    },
+  );
+  assert.deepEqual(starts, []);
+  await f.advance(0);
+  assert.deepEqual(starts, ["a@0"]);
+  await f.advance(499);
+  assert.deepEqual(starts, ["a@0"]);
+  await f.advance(1);
+  await f.advance(499);
+  assert.deepEqual(starts, ["a@0", "b@500", "c@999"]);
+  await f.advance(59_001);
+  await f.advance(500);
+  await f.advance(499);
+  assert.deepEqual(starts.slice(3), ["a@60000", "b@60500", "c@60999"]);
+  assert.equal(r.calls(), 3);
+  s.stop();
+});
+
+test("the first delay stays below the bound for short intervals and broken samples", () => {
+  const cases: Array<[number, number, number]> = [
+    [200, 0.999, 199],
+    [1, 0.999, 0],
+    [60_000, 1, 999],
+    [60_000, 5, 999],
+    [60_000, -0.5, 0],
+    [60_000, Number.NaN, 0],
+    [200, Number.POSITIVE_INFINITY, 0],
+  ];
+  for (const [intervalMs, sample, want] of cases) {
+    const delays: number[] = [];
+    const s = startScheduler([{ ...check, intervalMs }], {
+      timer: {
+        setTimeout: (_fn, ms) => delays.push(ms),
+        clearTimeout: () => {},
+      },
+      now: () => 0,
+      random: () => sample,
+      run: async (c) => mk(c),
+      onResult: () => {},
+    });
+    assert.deepEqual(delays, [want], `interval ${intervalMs} sample ${sample}`);
+    s.stop();
+  }
+});
+
+test("equal sync keeps the timer, a changed check samples again, removal and stop cancel", async () => {
+  const f = fakeTimer();
+  const r = samples(0.5);
+  let runs = 0;
+  const s = startScheduler([check, { ...check, id: "b" }], {
+    timer: f.timer,
+    now: f.now,
+    random: r.random,
+    run: async (c) => {
+      runs++;
+      return mk(c);
+    },
+    onResult: () => {},
+  });
+  const before = [...f.pending.keys()];
+  s.sync([{ ...check }, { ...check, id: "b" }]);
+  assert.deepEqual([...f.pending.keys()], before);
+  assert.equal(r.calls(), 2);
+  s.sync([
+    { ...check, timeoutMs: 5 },
+    { ...check, id: "b" },
+  ]);
+  assert.equal(r.calls(), 3);
+  s.sync([{ ...check, timeoutMs: 5 }]);
+  assert.equal(f.pending.size, 1);
+  s.stop();
+  assert.equal(f.pending.size, 0);
+  await f.advance(5000);
+  assert.equal(runs, 0);
+});
+
+test("a changed in-flight check is aborted, dropped and replaced without overlap", async () => {
+  const f = fakeTimer();
+  const signals: AbortSignal[] = [];
+  const runs: string[] = [];
+  const posted: string[] = [];
+  const errors: unknown[] = [];
+  let active = 0;
+  let maxActive = 0;
+  let finishOld: () => void = () => {};
+  const s = startScheduler([check], {
+    timer: f.timer,
+    now: f.now,
+    random: () => 0.5,
+    run: (c, signal) => {
+      runs.push(`${c.id}:${c.timeoutMs ?? "-"}`);
+      signals.push(signal);
+      active++;
+      maxActive = Math.max(maxActive, active);
+      return new Promise((resolve, reject) => {
+        // the old run settles only later, after its abort
+        signal.addEventListener("abort", () => {
+          finishOld = () => {
+            active--;
+            reject(new Error("aborted"));
+          };
+        });
+        if (c.timeoutMs === 5) {
+          active--;
+          resolve(mk(c));
+        }
+      });
+    },
+    onResult: (r) => {
+      posted.push(r.checkId);
+    },
+    onError: (_c, e) => errors.push(e),
+  });
+  await f.advance(500);
+  assert.deepEqual(runs, ["a:-"]);
+  s.sync([{ ...check }]);
+  assert.equal(signals[0]?.aborted, false);
+  s.sync([{ ...check, timeoutMs: 5 }]);
+  assert.equal(signals[0]?.aborted, true);
+  await f.advance(500);
+  assert.deepEqual(runs, ["a:-"]);
+  finishOld();
+  await f.advance(0);
+  assert.deepEqual(runs, ["a:-", "a:5"]);
+  assert.deepEqual(posted, ["a"]);
+  assert.deepEqual(errors, []);
+  assert.equal(maxActive, 1);
+  assert.equal(signals[1]?.aborted, false);
+  s.sync([]);
+  assert.equal(signals[1]?.aborted, true);
+  s.stop();
+});
+
+test("stop aborts the running check", async () => {
+  const f = fakeTimer();
+  let seen: AbortSignal | undefined;
+  const s = startScheduler([check], {
+    timer: f.timer,
+    now: f.now,
+    random: () => 0,
+    run: (_c, signal) => {
+      seen = signal;
+      return new Promise(() => {});
+    },
+    onResult: () => {},
+  });
+  await f.advance(0);
+  assert.equal(seen?.aborted, false);
+  s.stop();
+  assert.equal(seen?.aborted, true);
+});
+
+for (const path of ["replacement chain", "removal and re-add"] as const) {
+  test(`a new entry waits for the oldest unsettled run of its id: ${path}`, async () => {
+    const f = fakeTimer();
+    const starts: string[] = [];
+    let release: () => void = () => undefined;
+    const s = startScheduler([{ ...check, intervalMs: 60000 }], {
+      timer: f.timer,
+      now: f.now,
+      random: () => 0,
+      run: async (c) => {
+        starts.push(c.name);
+        return mk(c);
+      },
+      onResult: async () => {
+        if (starts.length === 1) await new Promise<void>((r) => (release = r));
+      },
+    });
+    await f.advance(0);
+    s.sync(path === "replacement chain" ? [{ ...check, intervalMs: 60000, name: "B" }] : []);
+    await f.advance(5000);
+    s.sync([{ ...check, intervalMs: 60000, name: "C" }]);
+    await f.advance(5000);
+    assert.deepEqual(starts, ["A"]);
+    release();
+    await flush();
+    assert.deepEqual(starts, ["A", "C"]);
+    s.stop();
+  });
+}

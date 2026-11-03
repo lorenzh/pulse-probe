@@ -1,6 +1,7 @@
 /* eslint-disable sonarjs/no-hardcoded-ip -- test fixtures for the private-range deny list, never dialed */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { BlockedAddressError } from "@lorenzh/pulse-kit";
 import type { TlsConnectOptions } from "./check.ts";
 import type { ResolveOptions } from "./check-dns.ts";
@@ -29,7 +30,8 @@ function setup(answers: Record<string, string[]>, lookupMs = 0, connectMs = 0) {
       tcp.push(options);
       if (failFor.has(options.host)) throw refused();
     },
-    tlsConnect: async (options) => {
+    tlsConnect: async ({ signal: _signal, ...options }) => {
+      // The forwarded signal is checked in the cancellation tests; here only the target matters.
       tls.push(options);
       clock += connectMs;
       if (failFor.has(options.host)) throw refused();
@@ -142,4 +144,70 @@ test("dns blocks a private resolver literal before any query", async () => {
   assert.deepEqual(await s.guard.resolve({ ...base, signal: signal() }), ["10.0.0.1"]);
   assert.equal(s.resolves.length, 2);
   assert.equal(s.lookups.length, 0);
+});
+
+function guardWith(tlsConnect: (options: TlsConnectOptions) => Promise<{ validTo: number }>) {
+  const lookups: string[] = [];
+  const guard = createCheckGuard({
+    fetch: async () => new Response("ok"),
+    lookup: async (host) => {
+      lookups.push(host);
+      return ["93.184.216.34"];
+    },
+    tcpConnect: async () => {},
+    tlsConnect,
+    resolve: async () => [],
+    monotonic: () => 0,
+  });
+  return { guard, lookups };
+}
+
+test("guarded tls with an aborted signal makes no lookup and no connect", async () => {
+  const inner: TlsConnectOptions[] = [];
+  const s = guardWith(async (options) => {
+    inner.push(options);
+    return { validTo: 1 };
+  });
+  const ctl = new AbortController();
+  const reason = { why: "shutdown" };
+  ctl.abort(reason);
+  await assert.rejects(
+    s.guard.tlsConnect({ host: "example.test", port: 443, timeoutMs: 60_000, signal: ctl.signal }),
+    (err: unknown) => err === reason,
+  );
+  assert.deepEqual(s.lookups, []);
+  assert.equal(inner.length, 0);
+});
+
+test("guarded tls aborted during the connect aborts the inner signal", async () => {
+  const inner: TlsConnectOptions[] = [];
+  let called: () => void = () => {};
+  const isCalled = new Promise<void>((r) => {
+    called = r;
+  });
+  const s = guardWith(
+    (options) =>
+      new Promise((_resolve, reject) => {
+        inner.push(options);
+        options.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+          once: true,
+        });
+        called();
+      }),
+  );
+  const ctl = new AbortController();
+  const reason = { why: "changed" };
+  const pending = s.guard.tlsConnect({
+    host: "example.test",
+    port: 443,
+    timeoutMs: 60_000,
+    signal: ctl.signal,
+  });
+  await isCalled;
+  ctl.abort(reason);
+  await assert.rejects(pending, (err: unknown) => err === reason);
+  assert.equal(inner.length, 1);
+  assert.equal(inner[0]?.host, "93.184.216.34");
+  assert.equal(inner[0]?.signal?.aborted, true);
+  assert.equal(getEventListeners(ctl.signal, "abort").length, 0);
 });

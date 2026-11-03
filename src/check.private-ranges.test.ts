@@ -210,7 +210,8 @@ test("tcp and tls to a name resolving to a private address make no connect call"
 test("tls to a public name connects to the address with the name as servername", async () => {
   const seen: TlsConnectOptions[] = [];
   const g = guarded({ "public.test": ["203.0.113.10"] }, undefined, {
-    tlsConnect: async (options) => {
+    tlsConnect: async ({ signal: _signal, ...options }) => {
+      // The guard now forwards a signal; this test checks only the target and the name.
       seen.push(options);
       return { validTo: NOW + 90 * 86_400_000 };
     },

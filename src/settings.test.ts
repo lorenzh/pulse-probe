@@ -27,11 +27,29 @@ test("loadSettings reads the buffer settings", () => {
   const s = load({
     ...good,
     PULSE_BUFFER_MAX_RESULTS: "5",
-    PULSE_BUFFER_MAX_AGE_MS: "2147483647",
+    PULSE_BUFFER_MAX_AGE_MS: "604800000",
   });
   assert.equal(s.bufferMaxResults, 5);
-  assert.equal(s.bufferMaxAgeMs, 2_147_483_647);
+  assert.equal(s.bufferMaxAgeMs, 604_800_000);
 });
+
+test("loadSettings rejects a buffer age over seven days with the range", () => {
+  assert.throws(
+    () => load({ ...good, PULSE_BUFFER_MAX_AGE_MS: "604800001" }),
+    (err: unknown) =>
+      err instanceof StartupError &&
+      err.message === "PULSE_BUFFER_MAX_AGE_MS: must be an integer from 1 to 604800000",
+  );
+});
+
+for (const value of ["0", "7d", "2147483647"]) {
+  test(`loadSettings rejects PULSE_BUFFER_MAX_AGE_MS=${value}`, () => {
+    assert.throws(
+      () => load({ ...good, PULSE_BUFFER_MAX_AGE_MS: value }),
+      (err: unknown) => err instanceof StartupError,
+    );
+  });
+}
 
 for (const [name, env] of [
   ["PULSE_PROBE_TOKEN", {}],

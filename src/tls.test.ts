@@ -1,13 +1,14 @@
 import { afterAll as after, test } from "bun:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { getEventListeners } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tls from "node:tls";
 import type { TlsCheck } from "@lorenzh/pulse-contract";
-import { DAY_MS, runCheck } from "./check.ts";
+import { DAY_MS, runCheck, tlsConnect } from "./check.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "probe-tls-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -165,4 +166,48 @@ test("tls: sends the host as SNI", async () => {
   } finally {
     await close(server);
   }
+});
+
+test("tls: default tlsConnect with an aborted signal rejects with its reason and opens no socket", async () => {
+  let connections = 0;
+  const { server, port } = await serve(90);
+  server.on("connection", () => {
+    connections++;
+  });
+  const ctl = new AbortController();
+  const reason = { why: "shutdown" };
+  ctl.abort(reason);
+  try {
+    await assert.rejects(
+      tlsConnect({ host: "127.0.0.1", port, timeoutMs: 60_000, signal: ctl.signal }),
+      (err: unknown) => err === reason,
+    );
+  } finally {
+    await close(server);
+  }
+  assert.equal(connections, 0);
+});
+
+test("tls: aborting a pending handshake rejects with the reason and closes the socket", async () => {
+  let serverSocketClosed: Promise<void> = Promise.resolve();
+  let accepted: () => void = () => {};
+  const isAccepted = new Promise<void>((r) => {
+    accepted = r;
+  });
+  // A plain TCP server that never answers keeps the TLS handshake pending.
+  const server = net.createServer((socket) => {
+    serverSocketClosed = new Promise<void>((r) => socket.once("close", () => r()));
+    accepted();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const ctl = new AbortController();
+  const reason = { why: "changed" };
+  const pending = tlsConnect({ host: "127.0.0.1", port, timeoutMs: 60_000, signal: ctl.signal });
+  await isAccepted;
+  ctl.abort(reason);
+  await assert.rejects(pending, (err: unknown) => err === reason);
+  assert.equal(getEventListeners(ctl.signal, "abort").length, 0);
+  await serverSocketClosed;
+  await close(server);
 });

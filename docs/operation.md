@@ -26,7 +26,8 @@ Retryable failures (network error, timeout, HTTP 429 or 5xx) write no line per r
 - A result that pulse-api rejects (400, 401, 403, 404 or any other non-204 answer that is not retryable) is dropped and counted `rejected`; it does not block the ones behind it.
 - **Lost on restart or shutdown:** the buffer lives in memory only. On a restart or a stop the whole buffer is lost; the probe logs the count.
 - **How replayed results appear:** pulse-api marks a result `late` only when it is older than the newest stored result of the same check and location. Results replayed in order are not late: they drive state, incidents and `consecutive_down` with their original timestamps. A replay can open or resolve an incident with an old timestamp, so notifications can arrive after the outage with old times. `late` shows only for out-of-order arrival. A few results in flight when buffering starts can arrive out of order; the API then marks the older one late (history only).
-- pulse-api rejects results older than 7 days with 400. Keep `PULSE_BUFFER_MAX_AGE_MS` below that.
+- pulse-api rejects results older than 7 days with 400, so `PULSE_BUFFER_MAX_AGE_MS` is at most 604800000 (7 days). A larger value stops startup with exit code 2 and `PULSE_BUFFER_MAX_AGE_MS: must be an integer from 1 to 604800000`; this breaks a setup that used a larger value before.
+- Only `GET` and `HEAD` HTTP checks retry. Checks with another method now make one attempt per run, even with `retries` set.
 - Alerts: `pulse_probe_buffered_results > 0` for 10 minutes; `increase(pulse_probe_results_dropped_total[1h]) > 0`.
 
 ## State

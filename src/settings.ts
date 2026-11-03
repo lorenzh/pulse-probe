@@ -22,6 +22,8 @@ export const DEFAULT_BUFFER_MAX_RESULTS = 10_000;
 export const DEFAULT_BUFFER_MAX_AGE_MS = 3_600_000;
 // A count limit kept for compatibility, not a timer bound.
 const MAX_BUFFER_RESULTS = 2_147_483_647;
+// pulse-api rejects results older than 7 days, so an older buffered result can never be delivered.
+export const MAX_BUFFER_MAX_AGE_MS = 604_800_000;
 
 export interface HealthSettings {
   port: number;
@@ -79,6 +81,7 @@ export function loadSettings(env: Env, readFile: (path: string) => string): Sett
       bufferMaxAgeMs: readMs(env, "PULSE_BUFFER_MAX_AGE_MS", {
         fallback: DEFAULT_BUFFER_MAX_AGE_MS,
         min: 1,
+        max: MAX_BUFFER_MAX_AGE_MS,
       }),
       logLevel: readLogLevel(env),
       health: readHealth(env),

@@ -7,6 +7,7 @@ import {
   resolveAllowed,
 } from "@lorenzh/pulse-kit";
 import { blockedCategory } from "./address-policy.ts";
+import { attemptSignal } from "./attempt.ts";
 import type { CheckDeps, TlsConnect } from "./check.ts";
 import type { Resolve } from "./check-dns.ts";
 import type { TcpConnect } from "./check-tcp.ts";
@@ -45,7 +46,8 @@ export function createCheckGuard(deps: CheckGuardDeps): CheckGuard {
 
   const tlsConnect: TlsConnect = async (options) => {
     const { host, timeoutMs } = options;
-    const signal = AbortSignal.timeout(timeoutMs);
+    options.signal?.throwIfAborted();
+    const signal = attemptSignal(timeoutMs, options.signal);
     const start = deps.monotonic();
     const addresses = await resolveAllowed(host, { lookup, classify, signal });
     const servername = options.servername ?? (isIP(host) === 0 ? host : undefined);
@@ -61,6 +63,7 @@ export function createCheckGuard(deps: CheckGuardDeps): CheckGuard {
           host: address,
           port: options.port,
           timeoutMs: remaining,
+          signal,
           ...(servername !== undefined ? { servername } : {}),
         });
       },
