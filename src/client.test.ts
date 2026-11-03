@@ -855,8 +855,15 @@ test("skip warnings saturate after 10000 ids across reloads", async () => {
       skipHdr,
     ] as unknown[],
   };
+  // The large body is serialized once; the small follow-up lists go through `skipApi`.
+  const large = JSON.stringify(list.value);
+  const small = skipApi(list);
+  let isLarge = true;
   const deps = {
-    fetch: skipApi(list),
+    fetch: (async (...args: Parameters<typeof fetch>) =>
+      isLarge
+        ? new Response(large, { headers: { "x-pulse-contract": "1" } })
+        : small(...args)) as unknown as typeof fetch,
     log,
     env: { PULSE_HEADER_SKIP: SKIP_SENTINEL },
     headerHosts: skipHosts,
@@ -896,6 +903,7 @@ test("skip warnings saturate after 10000 ids across reloads", async () => {
       [],
     ],
   ];
+  isLarge = false;
   for (const [value, ids] of steps) {
     list.value = value;
     const before = logs.length;

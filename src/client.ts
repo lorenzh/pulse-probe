@@ -204,6 +204,8 @@ export function skipLogger(
   }
   const state = found;
   return (id, message) => {
+    // Once saturated, every ID is either remembered or past the cap: nothing logs, so skip the hash.
+    if (state.isSaturated) return;
     const key = skipKey(id);
     if (state.keys.has(key)) return;
     if (state.keys.size < MAX_WARNED_SKIPS) {
@@ -211,7 +213,6 @@ export function skipLogger(
       log(message);
       return;
     }
-    if (state.isSaturated) return;
     state.isSaturated = true;
     log(SKIP_OVERFLOW);
   };
