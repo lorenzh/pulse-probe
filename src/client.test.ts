@@ -921,7 +921,8 @@ test("skipLogger logs the overflow line once per logger at 10000 remembered ids"
     lines.push(m);
   };
   const logSkip = skipLogger(log);
-  const ids = skipIds("k", 0, 9_999);
+  const all = skipIds("k", 0, 10_000);
+  const ids = all.slice(0, 10_000);
   for (const id of ids) logSkip(id, id);
   assert.equal(lines.length, 10000);
   assert.equal(lines.includes(OVERFLOW), false);
@@ -937,7 +938,7 @@ test("skipLogger logs the overflow line once per logger at 10000 remembered ids"
   // A fresh log starts empty and saturates on its own; the saturated one stays quiet.
   const fresh: string[] = [];
   const logFresh = skipLogger((m) => fresh.push(m));
-  for (const id of skipIds("k", 0, 10_000)) logFresh(id, id);
+  for (const id of all) logFresh(id, id);
   assert.equal(fresh.length, 10001);
   assert.equal(fresh[10000], OVERFLOW);
   skipLogger(log)("k00001", "line k00001");

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   type Check,
   checkWireVersion,
@@ -188,9 +187,12 @@ const MAX_WARNED_SKIPS = 10_000;
 const SKIP_OVERFLOW = `skipped checks exceed ${MAX_WARNED_SKIPS} remembered IDs; new skip lines are suppressed until the probe restarts`;
 
 // "utf16le" hashes the exact code units: the default UTF-8 encoding maps every lone surrogate to
-// U+FFFD, so distinct IDs would share one key.
+// U+FFFD, so distinct IDs would share one key. One hasher serves every call: `digest` resets it,
+// and the calls are synchronous. A new hasher per ID cost measurable CPU over 10000 IDs.
+const skipHasher = new Bun.CryptoHasher("sha256");
+
 function skipKey(id: string | null): string | null {
-  return id === null ? null : createHash("sha256").update(id, "utf16le").digest("hex");
+  return id === null ? null : skipHasher.update(id, "utf16le").digest("hex");
 }
 
 /** Returns a logger for skip lines that writes once per key for this `log`. Exported for tests. */
@@ -340,18 +342,16 @@ export async function loadChecks(
   if (!res.ok) throw toError(res.error);
   const checks: ProbeCheck[] = [];
   const logSkip = skipLogger(deps.log);
-  for (const [i, raw] of res.value.entries()) {
+  const env = deps.env ?? {};
+  const headerHosts = deps.headerHosts ?? new Map();
+  const raws = res.value;
+  for (let i = 0; i < raws.length; i++) {
+    const raw: unknown = raws[i];
     const parsed = validateCheck(raw, `checks[${i}]`);
     // Heartbeat checks are evaluated by the API; the probe drops them without a log line.
     if (!parsed.ok) logInvalid(raw, parsed.error, logSkip);
     else if (parsed.value.type !== "heartbeat") {
-      const check = withResolvedHeaders(
-        parsed.value,
-        deps.env ?? {},
-        deps.headerHosts ?? new Map(),
-        deps.log,
-        logSkip,
-      );
+      const check = withResolvedHeaders(parsed.value, env, headerHosts, deps.log, logSkip);
       if (check !== undefined) checks.push(check);
     }
   }
