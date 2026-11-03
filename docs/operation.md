@@ -4,18 +4,19 @@
 
 The probe writes JSON lines: `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields}`. `debug` and `info` go to standard output, `warn` and `error` to standard error. `PULSE_LOG_LEVEL` (default `info`) sets the lowest level written. At `debug` the probe logs every check result with `check` (id), `status`, `latencyMs` and `location`, never the URL.
 
-| Message                                                                                | Level | Meaning                                              |
-| -------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------- |
-| `header host bindings for <n> variable(s)`                                             | info  | Startup read `PULSE_PROBE_HEADER_HOSTS`.             |
-| `check <id>: header <Name> env <VAR> is not bound to host <host>; reporting down`      | warn  | A check's header secret is not bound to its host.    |
-| `running <n> check(s) against <url> from location <location>`                          | info  | Startup finished fetching the checks.                |
-| `fetching checks failed: <reason>; retrying in 10000ms`                                | warn  | The API is unreachable or answered badly at startup. |
-| `dropping result for <id>: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION` | warn  | The API answered 401 or 403.                         |
-| `dropping result for <id>: API answered HTTP <code>`                                   | warn  | The API did not answer 204.                          |
-| `API unreachable or busy: buffering results`                                           | warn  | The first result was buffered after an empty buffer. |
-| `buffer empty again: <n> delivered, <m> dropped`                                       | warn  | The buffer is empty; counts since buffering started. |
-| `shutting down: <n> buffered result(s) lost`                                           | warn  | Shutdown with results still in the buffer.           |
-| `check <id> failed unexpectedly: <error>`                                              | error | A check run threw. The check is rescheduled.         |
+| Message                                                                                              | Level | Meaning                                                    |
+| ---------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------- |
+| `header host bindings for <n> variable(s)`                                                           | info  | Startup read `PULSE_PROBE_HEADER_HOSTS`.                   |
+| `check <id>: header <Name> env <VAR> is not bound to host <host>; reporting down`                    | warn  | A check's header secret is not bound to its host.          |
+| `running <n> check(s) against <url> from location <location>`                                        | info  | Startup finished fetching the checks.                      |
+| `fetching checks failed: <reason>; retrying in 10000ms`                                              | warn  | The API is unreachable or answered badly at startup.       |
+| `dropping result for <id>: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`               | warn  | The API answered 401 or 403.                               |
+| `dropping result for <id>: API answered HTTP <code>`                                                 | warn  | The API did not answer 204.                                |
+| `API unreachable or busy: buffering results`                                                         | warn  | The first result was buffered after an empty buffer.       |
+| `buffer empty again: <n> delivered, <m> dropped`                                                     | warn  | The buffer is empty; counts since buffering started.       |
+| `skipped checks exceed 10000 remembered IDs; new skip lines are suppressed until the probe restarts` | warn  | More than 10000 distinct skipped IDs; see troubleshooting. |
+| `shutting down: <n> buffered result(s) lost`                                                         | warn  | Shutdown with results still in the buffer.                 |
+| `check <id> failed unexpectedly: <error>`                                                            | error | A check run threw. The check is rescheduled.               |
 
 Retryable failures (network error, timeout, HTTP 429 or 5xx) write no line per result.
 

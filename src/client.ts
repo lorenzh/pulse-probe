@@ -176,30 +176,44 @@ function resolveHeaders(
 // Loggers that already reported a missing version header: the reload loop must not repeat it.
 const warnedAbsent = new WeakSet<object>();
 
-// SHA-256 digests of the check IDs each logger already reported as skipped; `null` stands for
-// every record without a readable ID. The reload loop must not repeat a line. A hostile API can
-// send any number of long IDs, so keys have a fixed size and the set is cleared when it is full.
-const warnedSkips = new WeakMap<object, Set<string | null>>();
+// Per logger: SHA-256 digests of the check IDs it already reported as skipped, and whether it
+// logged the overflow line. `null` stands for every record without a readable ID. The reload loop
+// must not repeat a line. A hostile API can send any number of long IDs, so keys have a fixed
+// size and the set stops growing at its cap: it is never cleared, because a clear would log every
+// line again on each reload. Past the cap, one overflow line replaces all new skip lines until the
+// probe restarts.
+type SkipState = { keys: Set<string | null>; isSaturated: boolean };
+const warnedSkips = new WeakMap<object, SkipState>();
 const MAX_WARNED_SKIPS = 10_000;
+const SKIP_OVERFLOW = `skipped checks exceed ${MAX_WARNED_SKIPS} remembered IDs; new skip lines are suppressed until the probe restarts`;
 
+// "utf16le" hashes the exact code units: the default UTF-8 encoding maps every lone surrogate to
+// U+FFFD, so distinct IDs would share one key.
 function skipKey(id: string | null): string | null {
-  return id === null ? null : createHash("sha256").update(id).digest("hex");
+  return id === null ? null : createHash("sha256").update(id, "utf16le").digest("hex");
 }
 
-/** Returns a logger for skip lines that writes once per key for this `log`. */
-function skipLogger(log: (message: string) => void): (key: string | null, message: string) => void {
-  let seen = warnedSkips.get(log);
-  if (seen === undefined) {
-    seen = new Set();
-    warnedSkips.set(log, seen);
+/** Returns a logger for skip lines that writes once per key for this `log`. Exported for tests. */
+export function skipLogger(
+  log: (message: string) => void,
+): (id: string | null, message: string) => void {
+  let found = warnedSkips.get(log);
+  if (found === undefined) {
+    found = { keys: new Set(), isSaturated: false };
+    warnedSkips.set(log, found);
   }
-  const keys = seen;
+  const state = found;
   return (id, message) => {
     const key = skipKey(id);
-    if (keys.has(key)) return;
-    if (keys.size >= MAX_WARNED_SKIPS) keys.clear();
-    keys.add(key);
-    log(message);
+    if (state.keys.has(key)) return;
+    if (state.keys.size < MAX_WARNED_SKIPS) {
+      state.keys.add(key);
+      log(message);
+      return;
+    }
+    if (state.isSaturated) return;
+    state.isSaturated = true;
+    log(SKIP_OVERFLOW);
   };
 }
 
