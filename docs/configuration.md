@@ -66,13 +66,13 @@ See also [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/d
 - No message ever contains the token or the file content.
 - The token is read once at startup. Restart the probe after you change the variable or the file.
 - The file must be readable by the probe's user. In the Docker image that is `bun`, uid 1000.
-- Create a token with `openssl rand -hex 32`. The API owner enters it, with the probe's location, in the API's tokens file.
+- The API owner creates the token with its location through `POST /admin/tokens` on the API (see [tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/rest-api.md#tokens)) and gives the probe the returned secret.
 - `PULSE_LOCATION` must equal the location of the token. Otherwise the API answers 403 for every result.
 - The token is never logged. It travels in clear over plain HTTP, so run the API behind TLS or on a private network.
 
 ## Checks
 
-The probe has no check configuration of its own. It fetches the checks once at startup from `GET /probe/checks` on the API (with the probe token; an API that answers 404 gets the public `GET /checks` instead) and retries every 10000 ms until that succeeds, logging `fetching checks failed: <reason>; retrying in 10000ms` each time. The checks are defined in the API's checks file.
+The probe has no check configuration of its own. It fetches the checks at startup from `GET /probe/checks` on the API (with the probe token; an API that answers 404 gets the public `GET /checks` instead) and retries every 10000 ms until that succeeds, logging `fetching checks failed: <reason>; retrying in 10000ms` each time. After that it reloads them every `PULSE_CHECKS_RELOAD_MS` (see [checks reload](#checks-reload)). The checks are defined in the API's checks file.
 
 ### HTTP checks
 
@@ -185,6 +185,15 @@ HTTP checks with method `GET` or `HEAD` (also an omitted method), and TCP, DNS a
 - The probe stops retrying at shutdown, and early when the next attempt would start at or after the end of the check's interval.
 - TLS checks are not retried (`attempts` is 1).
 - HTTP checks with `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or any other method are not retried (`attempts` is 1, `retries` is ignored): a repeat could repeat the request's side effect. The configured method decides, so a `POST` that a 303 redirect turns into a `GET` is still not retried. Even without retries, such a check sends its request at every scheduled run, so each run can have a side effect on the target.
+
+Side effects of the checked request:
+
+- The checked request is not like the probe's own `POST /results`, which the API takes idempotently, or notify's at-least-once delivery. The probe never deduplicates the checked request.
+- Each probe location makes its own attempt at every run. A side effect can therefore repeat across runs, across locations and across followed redirects.
+- An attempt is not a minimum number of requests, and the probe does not promise that a run reaches the target. A check whose header secret is not bound to its host reports `down` with `attempts: 1` and sends no request. A run that is already aborted (shutdown) starts no request. A connection can fail before the target acts.
+- One attempt can send more than one request. A `307` or `308` redirect keeps the method and the body, so a `POST` with a body that gets a same-origin `307` sends two `POST` requests in one attempt. The probe follows up to 20 redirect hops, so one attempt makes at most 21 requests.
+- A `301` or `302` turns a `POST` without headers and body into a `GET`. With headers or a body, only same-origin hops are followed, and a `301`, `302` or `303` stops a check whose method is not `GET`.
+- Do not expect one request per run or once per interval. Point checks at endpoints without side effects where you can.
 
 ### Schedule
 
