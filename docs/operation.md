@@ -27,28 +27,28 @@ Retryable failures (network error, timeout, HTTP 429 or 5xx) write no line per r
 - **Lost on restart or shutdown:** the buffer lives in memory only. On a restart or a stop the whole buffer is lost; the probe logs the count.
 - **How replayed results appear:** pulse-api marks a result `late` only when it is older than the newest stored result of the same check and location. Results replayed in order are not late: they drive state, incidents and `consecutive_down` with their original timestamps. A replay can open or resolve an incident with an old timestamp, so notifications can arrive after the outage with old times. `late` shows only for out-of-order arrival. A few results in flight when buffering starts can arrive out of order; the API then marks the older one late (history only).
 - pulse-api rejects results older than 7 days with 400, so `PULSE_BUFFER_MAX_AGE_MS` is at most 604800000 (7 days). A larger value stops startup with exit code 2 and `PULSE_BUFFER_MAX_AGE_MS: must be an integer from 1 to 604800000`; this breaks a setup that used a larger value before.
-- Only `GET` and `HEAD` HTTP checks retry. Checks with another method now make one attempt per run, even with `retries` set.
+- Only `GET` and `HEAD` HTTP checks retry. Checks with another method make one attempt per run, even with `retries` set. One attempt is not one request; see [retries](configuration.md#retries).
 - Alerts: `pulse_probe_buffered_results > 0` for 10 minutes; `increase(pulse_probe_results_dropped_total[1h]) > 0`.
 
 ## State
 
-The probe keeps no state on disk. A restart loses nothing except the results that were dropped.
+The probe keeps no state on disk. Results that wait in the buffer are lost on a stop, a restart or a crash; a clean shutdown logs their count (`shutting down: <n> buffered result(s) lost`). Nothing is replayed after a restart.
 
 ## After the checks change
 
-The API reads its checks file at startup. After the file changes, restart the API only. Each running probe reloads the checks on its own within `PULSE_CHECKS_RELOAD_MS` (default 60 s) and needs no restart.
+The API applies a changed checks file without a restart; see [changing checks](https://github.com/lorenzh/pulse-api/blob/main/docs/operation.md#changing-checks). Each running probe then picks up the change on its own within `PULSE_CHECKS_RELOAD_MS` (default 60 s) and needs no restart.
 
 ## Changing the token or location
 
 Both are read at startup. Restart the probe after changing `PULSE_PROBE_TOKEN`, `PULSE_PROBE_TOKEN_FILE` or `PULSE_LOCATION`. With a token file, replace the file content and restart the probe; the file is read only at startup.
 
-Token rotation:
+Token rotation (see [token rotation](https://github.com/lorenzh/pulse-api/blob/main/docs/operation.md#token-rotation) in pulse-api):
 
-1. The API owner adds the new token and restarts the API.
-2. Set the new `PULSE_PROBE_TOKEN`, or write the new token into the file of `PULSE_PROBE_TOKEN_FILE`, and restart the probe.
-3. The API owner removes the old token and restarts the API again. The API reads its tokens only at startup, so the old token works until this restart. After it, the old token gets 401.
+1. The API owner rotates the token with `POST /admin/tokens/<id>/rotate`. The answer holds the new secret. The old secret stays valid for 10 minutes.
+2. Within those 10 minutes, set the new `PULSE_PROBE_TOKEN`, or write it into the file of `PULSE_PROBE_TOKEN_FILE`, and restart the probe.
+3. After the overlap only the new secret works. No API restart is needed.
 
-Between steps 1 and 3 the old token still works. Roll out in this order when you introduce tokens: give probes their tokens first (an old API ignores the header), then enable tokens on the API.
+The API manages tokens over HTTP ([tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/rest-api.md#tokens)). Editing the API's tokens file after its import changes nothing. A new location gets its own token from `POST /admin/tokens`.
 
 ## Health and metrics
 

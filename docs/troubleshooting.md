@@ -34,13 +34,13 @@ Action: write the token as plain ASCII, for example with `openssl rand -hex 32 >
 ## `PULSE_LOCATION is longer than 64 characters`
 
 Cause: the trimmed location is too long. The probe exits at startup.
-Action: use a shorter name, and the same one in the API's tokens file.
+Action: use a shorter name, and the same one as the `location` of the token on the API.
 
 ## `token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`
 
 Full line: `dropping result for <id>: token rejected, ...`.
 Cause: the API answered 401 or 403. The token is unknown, or `PULSE_LOCATION` differs from the location of the token (an unset location means `default`).
-Action: compare both values with the API's tokens file. The probe keeps running and drops every result until you fix them and restart it.
+Action: compare both values with the token's `location` in `GET /admin/tokens` on the API ([tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/rest-api.md#tokens)). The probe keeps running and drops every result until you fix them and restart it.
 
 ## `fetching checks failed: ... retrying in 10000ms`
 
@@ -60,7 +60,7 @@ Action: add the host to the variable's list and restart the probe, or point the 
 ## `skipping invalid check: ...`
 
 Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (up to 10000 remembered IDs, then the memory is reset), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
-Action: fix the check in the API's checks file and restart the API. The probe picks it up on its next reload.
+Action: fix the check in the API's checks file. The API applies it without a restart, and the probe picks it up on its next reload.
 
 ## `contract version mismatch: ...`
 
@@ -69,7 +69,7 @@ Cause: the API reports a different `x-pulse-contract` version than this probe wa
 ## `dropping result for <id>: API answered HTTP <code>`
 
 Cause: the API answered something final other than 204 (and not 401 or 403), for example 400 for an invalid body. HTTP 429 and 5xx are not final: those results are buffered. On 404 (unknown or removed check) the probe reloads its checks at once.
-Action: read the API log for the reason. After a checks change, restart only the API.
+Action: read the API log for the reason. After a checks change the API reloads its file on its own, and the probe follows within `PULSE_CHECKS_RELOAD_MS`.
 
 ## `API unreachable or busy: buffering results`
 
@@ -87,8 +87,8 @@ Action: test the URL from the probe's host. Raise `timeoutMs` in the API's check
 
 ## New or changed checks do not run
 
-Cause: the API reads its checks file at startup, and the probe reloads every `PULSE_CHECKS_RELOAD_MS` (default 60 s).
-Action: restart the API, then wait one reload interval. Look for `reloading checks failed` in the probe log.
+Cause: the API applies a changed checks file on its next hot reload (see [changing checks](https://github.com/lorenzh/pulse-api/blob/main/docs/operation.md#changing-checks)), and the probe reloads every `PULSE_CHECKS_RELOAD_MS` (default 60 s).
+Action: wait one reload interval of each. Look for a reload error in the API log and for `reloading checks failed` in the probe log.
 
 ## No incident opens although a probe reports down
 
