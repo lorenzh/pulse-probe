@@ -10,6 +10,7 @@ import {
   loadChecks,
   postResult,
   StartupAbortedError,
+  skipLogger,
 } from "./client.ts";
 import { parseHeaderHosts } from "./header-hosts.ts";
 
@@ -830,4 +831,141 @@ test("skip warnings keep bounded state for hostile ids", async () => {
     }
     assert.ok(heap() - before < 6, c.name);
   }
+});
+
+const OVERFLOW =
+  "skipped checks exceed 10000 remembered IDs; new skip lines are suppressed until the probe restarts";
+
+/** IDs `<prefix>00000` up to `<prefix><last>`, five digits each. */
+function skipIds(prefix: string, from: number, to: number): string[] {
+  const ids: string[] = [];
+  for (let i = from; i <= to; i++) ids.push(prefix + String(i).padStart(5, "0"));
+  return ids;
+}
+
+test("skip warnings saturate after 10000 ids across reloads", async () => {
+  const logs: string[] = [];
+  const log = (m: string): void => {
+    logs.push(m);
+  };
+  const list = {
+    value: [
+      ...skipIds("c", 0, 10_000).map((id) => ({ id, type: "x" })),
+      skipOk,
+      skipHdr,
+    ] as unknown[],
+  };
+  // The large body is serialized once; the small follow-up lists go through `skipApi`.
+  const large = JSON.stringify(list.value);
+  const small = skipApi(list);
+  let isLarge = true;
+  const deps = {
+    fetch: (async (...args: Parameters<typeof fetch>) =>
+      isLarge
+        ? new Response(large, { headers: { "x-pulse-contract": "1" } })
+        : small(...args)) as unknown as typeof fetch,
+    log,
+    env: { PULSE_HEADER_SKIP: SKIP_SENTINEL },
+    headerHosts: skipHosts,
+  };
+  const counts: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    const before = logs.length;
+    const checks = await loadChecks("https://api", deps);
+    assert.deepEqual(
+      checks.map((c) => c.id),
+      ["ok", "hdr"],
+    );
+    counts.push(logs.length - before);
+  }
+  assert.deepEqual(counts, [10001, 0, 0]);
+  assert.equal(logs.filter((l) => l === OVERFLOW).length, 1);
+  assert.equal(new Set(logs).size, logs.length);
+  assert.equal(
+    logs.some((l) => l.includes("skip-sentinel")),
+    false,
+  );
+
+  const steps: [unknown[], string[]][] = [
+    [
+      [
+        { ...skipOk, id: "c00005" },
+        { ...skipBad, id: "late" },
+      ],
+      ["c00005"],
+    ],
+    [[], []],
+    [
+      [
+        { ...skipBad, id: "late2" },
+        { ...skipBad, id: "c00005" },
+      ],
+      [],
+    ],
+  ];
+  isLarge = false;
+  for (const [value, ids] of steps) {
+    list.value = value;
+    const before = logs.length;
+    assert.deepEqual(
+      (await loadChecks("https://api", deps)).map((c) => c.id),
+      ids,
+    );
+    assert.equal(logs.length - before, 0);
+  }
+});
+
+test("skipLogger logs the overflow line once per logger at 10000 remembered ids", () => {
+  const lines: string[] = [];
+  const log = (m: string): void => {
+    lines.push(m);
+  };
+  const logSkip = skipLogger(log);
+  const all = skipIds("k", 0, 10_000);
+  const ids = all.slice(0, 10_000);
+  for (const id of ids) logSkip(id, id);
+  assert.equal(lines.length, 10000);
+  assert.equal(lines.includes(OVERFLOW), false);
+  for (const id of ids) logSkip(id, id);
+  assert.equal(lines.length, 10000);
+  logSkip("k10000", "line k10000");
+  assert.equal(lines.length, 10001);
+  assert.equal(lines[10000], OVERFLOW);
+  for (const id of ["k10001", "k10002", null, "k00000"]) logSkip(id, String(id));
+  skipLogger(log)("k10003", "line k10003");
+  assert.equal(lines.length, 10001);
+
+  // A fresh log starts empty and saturates on its own; the saturated one stays quiet.
+  const fresh: string[] = [];
+  const logFresh = skipLogger((m) => fresh.push(m));
+  for (const id of all) logFresh(id, id);
+  assert.equal(fresh.length, 10001);
+  assert.equal(fresh[10000], OVERFLOW);
+  skipLogger(log)("k00001", "line k00001");
+  assert.equal(lines.length, 10001);
+});
+
+test("loadChecks keeps lone-surrogate ids distinct", async () => {
+  const logs: string[] = [];
+  const list = {
+    value: [
+      { ...skipBad, id: "\ud800" },
+      { ...skipBad, id: "\ud801" },
+    ] as unknown[],
+  };
+  const deps = { fetch: skipApi(list), log: (m: string) => logs.push(m) };
+  await loadChecks("https://api", deps);
+  assert.equal(logs.length, 2);
+  assert.notEqual(logs[0], logs[1]);
+  assert.equal(logs.filter((l) => l.includes("\ud800")).length, 1);
+  assert.equal(logs.filter((l) => l.includes("\ud801")).length, 1);
+  await loadChecks("https://api", deps);
+  assert.equal(logs.length, 2);
+});
+
+test("loadChecks keeps an empty id apart from a record without id", async () => {
+  const logs: string[] = [];
+  const list = { value: [{ ...skipBad, id: "" }, skipNoId] as unknown[] };
+  await loadChecks("https://api", { fetch: skipApi(list), log: (m: string) => logs.push(m) });
+  assert.equal(logs.length, 2);
 });

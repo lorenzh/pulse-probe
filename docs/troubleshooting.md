@@ -59,8 +59,13 @@ Action: add the host to the variable's list and restart the probe, or point the 
 
 ## `skipping invalid check: ...`
 
-Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (up to 10000 remembered IDs, then the memory is reset), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
+Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (it remembers up to 10000 skipped check IDs; past that it logs one overflow line and no new skip lines until it restarts, remembered IDs stay quiet, and validation and recovery still run on every load), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
 Action: fix the check in the API's checks file. The API applies it without a restart, and the probe picks it up on its next reload.
+
+## `skipped checks exceed 10000 remembered IDs; new skip lines are suppressed until the probe restarts`
+
+Cause: the API sent more than 10000 distinct skipped check IDs. The probe remembers the first 10000, logs this line once, and writes no new skip line until it restarts. It still validates every check on each load and runs a check once it is valid.
+Action: fix the checks file of the API, then restart the probe to see the skip lines again.
 
 ## `contract version mismatch: ...`
 
