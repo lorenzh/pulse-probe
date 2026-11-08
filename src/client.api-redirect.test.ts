@@ -43,7 +43,7 @@ const validCheck = (id: string): Record<string, unknown> => ({
   url: "http://127.0.0.1:1/",
   intervalMs: 60_000,
   timeoutMs: 1_000,
-  expectedStatus: 200,
+  expectedStatus: [200],
 });
 
 test("authenticated check read is not redirected", async () => {
