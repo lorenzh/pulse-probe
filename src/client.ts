@@ -16,7 +16,7 @@ import {
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
 import { canonicalHost, type HeaderHosts, isBound } from "./header-hosts.ts";
-import { quote } from "./reason.ts";
+import { capReason, quote } from "./reason.ts";
 
 export interface ClientDeps {
   /** Probe token for `GET /probe/checks`. Without it only the public `GET /checks` is used. */
@@ -53,8 +53,9 @@ export const RETRY_MS = 10_000;
 export const FETCH_TIMEOUT_MS = 10_000;
 
 /**
- * `retry` is a network error, timeout, 429 or 5xx: the result may succeed later.
- * `rejected` never succeeds (400, 401, 403, other 4xx, or a 2xx/3xx that is not 204).
+ * `retry` is a network error, timeout, 429, 5xx, any 3xx (never followed) or an encoded 204:
+ * the result may succeed later.
+ * `rejected` never succeeds (400, 401, 403, other 4xx, or a 2xx that is not 204).
  * `unknown-check` is a 404: the check list is out of date; the result is dropped.
  */
 export type PostOutcome = "accepted" | "retry" | "rejected" | "unknown-check";
@@ -260,8 +261,8 @@ function logInvalid(
   logSkip: (key: string | null, message: string) => void,
 ): void {
   const id = readableId(raw);
-  const named = id === null ? "" : ` ${id}`;
-  logSkip(id, `skipping invalid check${named}: ${error}`);
+  const named = id === null ? "" : ` ${quote(id)}`;
+  logSkip(id, `skipping invalid check${named}: ${capReason(error)}`);
 }
 
 /**
@@ -279,14 +280,14 @@ function withResolvedHeaders(
   if (parsed.type === "tls" || check.type === "tls" || parsed.headers === undefined) return check;
   const headers = resolveHeaders(parsed.headers, parsed.url, env, headerHosts);
   if (!headers.ok && "denial" in headers) {
-    log(`check ${check.id}: ${headers.denial}; reporting down`);
+    log(`check ${quote(check.id)}: ${headers.denial}; reporting down`);
     check.headerDenial = headers.denial;
     return check;
   }
   if (!headers.ok) {
     logSkip(
       check.id,
-      `skipping check ${check.id}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
+      `skipping check ${quote(check.id)}: header ${headers.name} env ${headers.variable} ${headers.problem}`,
     );
     return undefined;
   }
@@ -391,38 +392,67 @@ export async function fetchChecks(
   }
 }
 
-/** Posts a result once. Final drops are logged; retryable failures are not. Returns the outcome. */
+/** Bun's `fetch` init: `decompress: false` stops the runtime from decoding the answer eagerly. */
+type PostInit = RequestInit & { decompress: false };
+
+/** True when a `content-encoding` value means an uncompressed body: absent, empty or `identity`. */
+function isIdentityCoding(value: string | null): boolean {
+  if (value === null) return true;
+  const coding = value.trim().toLowerCase();
+  return coding === "" || coding === "identity";
+}
+
+/** Outcome of a post answer from its status and headers; the body is never read. */
+function postOutcome(res: Response, checkId: string, log: (message: string) => void): PostOutcome {
+  if (res.status >= 300 && res.status <= 399) return "retry";
+  if (res.status === 204) {
+    return isIdentityCoding(res.headers.get("content-encoding")) ? "accepted" : "retry";
+  }
+  if (res.status === 429 || res.status >= 500) return "retry";
+  if (res.status === 401 || res.status === 403) {
+    log(
+      `dropping result for ${quote(checkId)}: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`,
+    );
+    return "rejected";
+  }
+  log(`dropping result for ${quote(checkId)}: API answered HTTP ${res.status}`);
+  return res.status === 404 ? "unknown-check" : "rejected";
+}
+
+/**
+ * Posts a result once. Final drops are logged; retryable failures are not. Returns the outcome.
+ * Redirects are not followed and the answer is never decoded or read.
+ */
 export async function postResult(
   baseUrl: string,
   result: Result,
   deps: Pick<ClientDeps, "fetch" | "log" | "signal"> & { token: string },
 ): Promise<PostOutcome> {
   try {
-    const res = await deps.fetch(join(baseUrl, "/results"), {
+    const init: PostInit = {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${deps.token}` },
+      redirect: "manual",
+      decompress: false,
+      headers: {
+        "content-type": "application/json",
+        "accept-encoding": "identity",
+        authorization: `Bearer ${deps.token}`,
+      },
       body: JSON.stringify(result),
       signal:
         deps.signal === undefined
           ? AbortSignal.timeout(10_000)
           : AbortSignal.any([AbortSignal.timeout(10_000), deps.signal]),
-    });
-    // Best-effort body cancel after the response is handled; failure to cancel is irrelevant.
-    await res.body?.cancel().catch(() => {});
+    };
+    const res = await deps.fetch(join(baseUrl, "/results"), init);
     const version = checkWireVersion(res.headers.get(WIRE_VERSION_HEADER));
     if (version.status === "mismatch") {
       deps.log(`API answered POST /results with a contract version mismatch: ${version.error}`);
     }
-    if (res.status === 204) return "accepted";
-    if (res.status === 429 || res.status >= 500) return "retry";
-    if (res.status === 401 || res.status === 403) {
-      deps.log(
-        `dropping result for ${result.checkId}: token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`,
-      );
-      return "rejected";
-    }
-    deps.log(`dropping result for ${result.checkId}: API answered HTTP ${res.status}`);
-    return res.status === 404 ? "unknown-check" : "rejected";
+    const outcome = postOutcome(res, result.checkId, deps.log);
+    // Not awaited: a stalled body must not hold the outcome, and a failed cancel changes nothing.
+    res.body?.cancel().catch(() => {});
+    return outcome;
   } catch {
     // Network error or timeout: the buffer logs and retries, so no line per failure.
     return "retry";

@@ -2,7 +2,8 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { fetchChecks, StartupAbortedError } from "./client.ts";
+import { fetchChecks, loadChecks, type ProbeCheck, StartupAbortedError } from "./client.ts";
+import { startReloader } from "./reloader.ts";
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
   return new Promise((resolve) => {
@@ -91,6 +92,113 @@ test("invalid JSON from the api logs the fixed text", async () => {
     assert.ok(failure.includes("invalid JSON: response body is not valid JSON"), failure);
     assert.ok(!logs.some((l) => l.includes(marker)));
   } finally {
+    await close(api.server);
+  }
+});
+
+async function countingTarget(): Promise<{ server: http.Server; url: string; hits: () => number }> {
+  let count = 0;
+  const t = await listen((_q, res) => {
+    count++;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify([validCheck("from-target")]));
+  });
+  return { ...t, hits: () => count };
+}
+
+test("tokenless check read is not redirected", async () => {
+  const target = await countingTarget();
+  const api = await listen((_q, res) => {
+    res.statusCode = 308;
+    res.setHeader("location", `${target.url}/checks`);
+    res.end();
+  });
+  try {
+    const logs = await firstFailure(api.url, undefined);
+    assert.equal(target.hits(), 0);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0] ?? "", /^fetching checks failed: HTTP 308; /);
+  } finally {
+    await close(api.server);
+    await close(target.server);
+  }
+});
+
+test("fallback check read is not redirected", async () => {
+  const token = `tok-${crypto.randomUUID()}`;
+  const target = await countingTarget();
+  const apiPaths: string[] = [];
+  const api = await listen((q, res) => {
+    apiPaths.push(q.url ?? "");
+    res.statusCode = q.url === "/probe/checks" ? 404 : 307;
+    if (res.statusCode === 307) res.setHeader("location", `${target.url}/checks`);
+    res.end();
+  });
+  try {
+    const logs = await firstFailure(api.url, token);
+    assert.equal(target.hits(), 0);
+    assert.deepEqual(apiPaths, ["/probe/checks", "/checks"]);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0] ?? "", /^fetching checks failed: HTTP 307; /);
+    assert.ok(!logs.some((l) => l.includes(token)));
+  } finally {
+    await close(api.server);
+    await close(target.server);
+  }
+});
+
+test("invalid JSON on reload logs the fixed text and keeps the checks", async () => {
+  const marker = `body-${crypto.randomUUID()}`;
+  let calls = 0;
+  const api = await listen((_q, res) => {
+    calls++;
+    res.setHeader("content-type", "application/json");
+    res.setHeader("x-pulse-contract", "1");
+    res.end(calls === 1 ? `{"${marker}": ${marker}` : JSON.stringify([validCheck("next")]));
+  });
+  const pending: (() => void)[] = [];
+  let scheduled = (): void => {};
+  const timer = {
+    setTimeout: (fn: () => void): unknown => {
+      pending.push(fn);
+      scheduled();
+      return pending.length;
+    },
+    clearTimeout: (): void => {},
+  };
+  const tick = async (): Promise<void> => {
+    const fn = pending.shift();
+    const next = new Promise<void>((r) => (scheduled = r));
+    fn?.();
+    await next;
+  };
+  const logs: string[] = [];
+  const applied: ProbeCheck[][] = [];
+  const reloader = startReloader({
+    timer,
+    now: () => 0,
+    load: () => loadChecks(api.url, { fetch, log: (m) => logs.push(m) }),
+    apply: (checks) => applied.push(checks),
+    log: (m) => logs.push(m),
+    intervalMs: 60_000,
+    retryMs: 1_000,
+    minGapMs: 0,
+  });
+  try {
+    await tick();
+    assert.deepEqual(logs, [
+      "reloading checks failed: invalid JSON: response body is not valid JSON; keeping the current checks",
+    ]);
+    assert.equal(applied.length, 0);
+    await tick();
+    assert.deepEqual(
+      applied.map((checks) => checks.map((c) => c.id)),
+      [["next"]],
+    );
+    assert.equal(logs.length, 1);
+    assert.ok(!logs.some((l) => l.includes(marker)));
+  } finally {
+    reloader.stop();
     await close(api.server);
   }
 });
