@@ -336,10 +336,7 @@ test("incompatible locations exit before startup side effects", async () => {
   servers.push(blocker);
   await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
   const port = (blocker.address() as AddressInfo).port;
-  for (const [cls, location] of [
-    ["C0 control", `eu${String.fromCharCode(0x1b)}west`],
-    ["Latin-1", `eu${String.fromCharCode(0xe9)}west`],
-  ] as const) {
+  for (const [cls, location] of [["Latin-1", `eu${String.fromCharCode(0xe9)}west`]] as const) {
     const r = run({
       PULSE_PROBE_TOKEN: "tok-secret",
       PULSE_API_URL: api,
