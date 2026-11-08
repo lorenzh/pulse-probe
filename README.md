@@ -41,6 +41,8 @@ Checks reach whatever the probe's network reaches, internal addresses included: 
 
 A header secret (`{ "env": "PULSE_HEADER_*" }`) is sent only to the hosts that `PULSE_PROBE_HEADER_HOSTS` binds it to, for example `PULSE_PROBE_HEADER_HOSTS='{"PULSE_HEADER_SVC_TOKEN":["svc.example.com"]}'`. Without a binding, such a check reports `down` and the secret is never sent: see [header host bindings](docs/configuration.md#header-host-bindings). Set it before you upgrade: see [migration](docs/configuration.md#migration).
 
+A check that fails the contract validator is skipped with a `skipping invalid check` line while the other checks keep running. That includes a check with a header named `__proto__`: see [troubleshooting](docs/troubleshooting.md#skipping-invalid-check-).
+
 ## Documentation
 
 See [docs/index.md](docs/index.md): install, configuration, operation, troubleshooting and development. The quorum and incident rules are in the pulse-api docs: [quorum and incidents](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#quorum-and-incidents) and [locations and tokens](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#locations-and-tokens).
