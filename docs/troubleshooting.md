@@ -49,8 +49,8 @@ Action: compare both values with the token's `location` in `GET /admin/tokens` o
 
 ## `fetching checks failed: ... retrying in 10000ms`
 
-Cause: pulse-api is down, `PULSE_API_URL` is wrong (the reason shows `HTTP <code>`, a network code such as `ECONNREFUSED`, or `unexpected response`), or the request timed out after 10 seconds (`timed out`).
-Action: fix the URL or start the API. The probe retries on its own. After the first start it keeps the running checks and logs `reloading checks failed`. Inside Docker, `localhost` is the container; use `host.docker.internal` or the service name.
+Cause: pulse-api is down, `PULSE_API_URL` is wrong (the reason shows `HTTP <code>`, a network code such as `ECONNREFUSED`, or `unexpected response`), the request timed out after 10 seconds (`timed out`), or the answer is not valid JSON (`invalid JSON: response body is not valid JSON`; the body is never logged).
+Action: fix the URL or start the API. The probe retries on its own. After the first start it keeps the running checks and logs `reloading checks failed` with the same reason. Inside Docker, `localhost` is the container; use `host.docker.internal` or the service name.
 
 ## `PULSE_PROBE_HEADER_HOSTS ...` at startup (exit 2)
 
@@ -64,7 +64,7 @@ Action: add the host to the variable's list and restart the probe, or point the 
 
 ## `skipping invalid check: ...`
 
-Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (it remembers up to 10000 skipped check IDs; past that it logs one overflow line and no new skip lines until it restarts, remembered IDs stay quiet, and validation and recovery still run on every load), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A fixed check runs at the next reload without a new line.
+Cause: the API sent a check that fails the contract validator. The message names the field, for example `checks[3].intervalMs: must be an integer 1..2147483647` (`intervalMs` and `timeoutMs` accept 1 to 2147483647, the largest timer delay). The probe skips it and runs the others. The line appears once per check ID per probe process (it remembers up to 10000 skipped check IDs; past that it logs one overflow line and no new skip lines until it restarts, remembered IDs stay quiet, and validation and recovery still run on every load), not on every reload; records without an ID share one line. Restart the probe to see the lines again. A check ID longer than 80 characters is shortened to 80 characters plus `…`, and a validation text longer than 1000 characters is cut to 1000 ending with `…`. A fixed check runs at the next reload without a new line.
 A second example is `checks[0].headers.__proto__: is not an allowed header name`: the check has a header named `__proto__`. Older probes could fail the whole load on such a check and retry it; upgrade the probe to skip only that check.
 Action: fix the check in the API's checks file. The API applies it without a restart, and the probe picks it up on its next reload.
 
@@ -79,12 +79,12 @@ Cause: the API reports a different `x-pulse-contract` version than this probe wa
 
 ## `dropping result for <id>: API answered HTTP <code>`
 
-Cause: the API answered something final other than 204 (and not 401 or 403), for example 400 for an invalid body. HTTP 429 and 5xx are not final: those results are buffered. On 404 (unknown or removed check) the probe reloads its checks at once.
+Cause: the API answered something final other than 204 (and not 401 or 403), for example 400 for an invalid body. HTTP 3xx, an encoded 204, HTTP 429 and 5xx are not final: those results are buffered. On 404 (unknown or removed check) the probe reloads its checks at once.
 Action: read the API log for the reason. After a checks change the API reloads its file on its own, and the probe follows within `PULSE_CHECKS_RELOAD_MS`.
 
 ## `API unreachable or busy: buffering results`
 
-Cause: a post failed (network error, 10 s timeout, HTTP 429 or 5xx). The probe keeps the results in memory and delivers them in order when the API answers; `buffer empty again` closes the episode.
+Cause: a post failed (network error, 10 s timeout, HTTP 3xx because `PULSE_API_URL` redirects, an encoded 204, HTTP 429 or 5xx). The probe follows no redirect, so set `PULSE_API_URL` to the final endpoint. The probe keeps the results in memory and delivers them in order when the API answers; `buffer empty again` closes the episode.
 Action: check that the API is reachable from the probe. Watch `pulse_probe_buffered_results` and `pulse_probe_results_dropped_total`. Results beyond `PULSE_BUFFER_MAX_RESULTS` or `PULSE_BUFFER_MAX_AGE_MS` are dropped, and a restart loses the buffer.
 
 ## A check is always `down` with `ECONNREFUSED` or `timeout after <n>ms`

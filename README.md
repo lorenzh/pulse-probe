@@ -10,7 +10,7 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 Requires Bun 1.4.0 and a reachable pulse-api that knows your probe token.
 
-Reads of the checks from pulse-api follow no redirect, so `PULSE_API_URL` must be the final endpoint. They ask for an uncompressed answer and refuse a compressed one. Monitored HTTP checks keep their own redirect rules.
+Reads of the checks and result posts to pulse-api follow no redirect, so `PULSE_API_URL` must be the final endpoint. Both ask for an uncompressed answer. A read refuses a compressed answer. A result post that gets a redirect, or a 204 with an encoded body, keeps the result buffered and retries it. Other post answers keep their status outcome whatever their encoding, and the probe never decodes a post answer. When the API's check list is not valid JSON, the startup line and the reload line both say only `invalid JSON: response body is not valid JSON`, with no parser details and no body text. At startup the probe retries; on reload it keeps the current checks. Timeouts, network errors, oversized bodies, version mismatches and refused encodings keep their own reasons. Check IDs in log lines are cut to 80 characters plus `…`. Monitored HTTP checks keep their own redirect rules.
 
 ```sh
 bun install --frozen-lockfile
