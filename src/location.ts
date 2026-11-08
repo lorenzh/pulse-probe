@@ -8,6 +8,10 @@ export function parseLocation(raw: string | undefined): string {
   if (location.length > MAX_LOCATION_LENGTH) {
     throw new Error(`PULSE_LOCATION is longer than ${MAX_LOCATION_LENGTH} characters`);
   }
+  // RFC 9110 field value plus tab, ASCII only: the generated header refuses non-ASCII env values.
+  if (!/^[\t\x20-\x7e]*$/.test(location)) {
+    throw new Error("PULSE_LOCATION must hold only tab, space or visible ASCII characters");
+  }
   return location;
 }
 
