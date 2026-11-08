@@ -313,3 +313,90 @@ test(
   },
   { timeout: 20_000 },
 );
+
+async function waitExit(r: Run, waitMs = 10_000): Promise<{ code: number | null }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ code: number | null }>((resolve) => {
+    timer = setTimeout(() => resolve({ code: null }), waitMs);
+  });
+  try {
+    return await Promise.race([r.exit, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("incompatible locations exit before startup side effects", async () => {
+  let apiCalls = 0;
+  const api = await fakeApi((_q, res) => {
+    apiCalls++;
+    res.end("[]");
+  });
+  const blocker = http.createServer();
+  servers.push(blocker);
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const port = (blocker.address() as AddressInfo).port;
+  for (const [cls, location] of [["Latin-1", `eu${String.fromCharCode(0xe9)}west`]] as const) {
+    const r = run({
+      PULSE_PROBE_TOKEN: "tok-secret",
+      PULSE_API_URL: api,
+      PULSE_LOCATION: location,
+      PULSE_HEALTH_HOST: "127.0.0.1",
+      PULSE_HEALTH_PORT: String(port),
+    });
+    try {
+      const { code } = await waitExit(r);
+      assert.equal(code, 2, `${cls}: exit code`);
+      assert.equal(r.stdout(), "", `${cls}: stdout`);
+      const lines = r.stderr().trimEnd().split("\n");
+      assert.equal(lines.length, 1, `${cls}: one stderr line`);
+      assert.equal(
+        lines[0],
+        "pulse-probe: PULSE_LOCATION must hold only tab, space or visible ASCII characters",
+        `${cls}: stderr line`,
+      );
+      assert.ok(!r.stderr().includes("cannot listen"), `${cls}: no listener`);
+      assert.ok(!r.stderr().includes("tok-secret"), `${cls}: no token`);
+      assert.ok(!r.stderr().includes(location), `${cls}: no location`);
+      assert.equal(apiCalls, 0, `${cls}: no API request`);
+    } finally {
+      r.child.kill("SIGKILL");
+    }
+  }
+});
+
+test("an accepted location posts an up result through the real startup path", async () => {
+  const location = "eu west\t1 (a-b_c.d)";
+  const agents: (string | undefined)[] = [];
+  const target = await fakeApi((q, res) => {
+    agents.push(q.headers["user-agent"]);
+    res.end("ok");
+  });
+  const posted: { status: string; location: string }[] = [];
+  const api = await fakeApi((req, res) => {
+    if (req.url === "/probe/checks") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify([{ id: "web", name: "Web", url: target, intervalMs: 60_000 }]));
+      return;
+    }
+    let body = "";
+    req.on("data", (d: Buffer) => {
+      body += d.toString();
+    });
+    req.on("end", () => {
+      posted.push(JSON.parse(body) as (typeof posted)[number]);
+      res.statusCode = 204;
+      res.end();
+    });
+  });
+  const r = run({ PULSE_PROBE_TOKEN: "tok-secret", PULSE_API_URL: api, PULSE_LOCATION: location });
+  try {
+    await until(() => posted.length > 0);
+  } finally {
+    r.child.kill("SIGTERM");
+  }
+  assert.equal((await waitExit(r)).code, 0);
+  assert.equal(posted[0]?.status, "up");
+  assert.equal(posted[0]?.location, location);
+  assert.equal(agents[0], `pulse-probe (${location})`);
+});

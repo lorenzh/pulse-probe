@@ -36,6 +36,11 @@ Action: write the token as plain ASCII, for example with `openssl rand -hex 32 >
 Cause: the trimmed location is too long. The probe exits at startup.
 Action: use a shorter name, and the same one as the `location` of the token on the API.
 
+## `PULSE_LOCATION must hold only tab, space or visible ASCII characters`
+
+Cause: the trimmed location holds another character, for example an accented letter or a pasted control character. The probe exits at startup with exit code 2. The value is not printed.
+Action: rewrite the name with tab, space and visible ASCII characters only, keep it equal to the `location` of the token on the API, and restart the probe.
+
 ## `token rejected, check PULSE_PROBE_TOKEN and PULSE_LOCATION`
 
 Full line: `dropping result for <id>: token rejected, ...`.

@@ -200,3 +200,25 @@ test("an invalid PULSE_PROBE_HEADER_HOSTS stops the start without echoing the va
     );
   }
 });
+
+test("settings reject an incompatible location with a redacted StartupError", () => {
+  const message = "PULSE_LOCATION must hold only tab, space or visible ASCII characters";
+  const latin1 = new TextDecoder().decode(
+    new TextEncoder().encode(`eu${String.fromCharCode(0xe9)}west`),
+  );
+  for (const [cls, location] of [
+    ["C0 control", `eu${String.fromCharCode(0x1b)}west`],
+    ["Latin-1", latin1],
+  ] as const) {
+    assert.throws(
+      () => load({ ...good, PULSE_LOCATION: location }),
+      (err: unknown) =>
+        err instanceof StartupError &&
+        err.message === message &&
+        !err.message.includes("\n") &&
+        !err.message.includes(location) &&
+        !err.message.includes("tok-secret"),
+      `${cls} gives the redacted StartupError`,
+    );
+  }
+});

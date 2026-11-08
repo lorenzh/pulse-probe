@@ -4,6 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import type { HttpMethod } from "@lorenzh/pulse-contract";
 import { runCheck } from "./check.ts";
+import { parseLocation } from "./location.ts";
 
 function listen(handler: http.RequestListener): Promise<{ server: http.Server; url: string }> {
   return new Promise((resolve) => {
@@ -713,4 +714,35 @@ test("a run aborted on entry starts no work for any check type", async () => {
     assert.deepEqual([r.checkId, r.status, r.reason], [check.id, "down", "timeout after 60000ms"]);
   }
   assert.deepEqual(calls, []);
+});
+
+test("accepted locations complete a local HTTP check with unchanged identity", async () => {
+  const agents: (string | undefined)[] = [];
+  const { server, url } = await listen((q, res) => {
+    agents.push(q.headers["user-agent"]);
+    res.end("ok");
+  });
+  try {
+    let completed = 0;
+    for (let c = 0; c < 0x80; c++) {
+      if (c !== 0x09 && (c < 0x20 || c > 0x7e)) continue;
+      const raw = new TextDecoder().decode(
+        new TextEncoder().encode(`eu${String.fromCharCode(c)}west`),
+      );
+      const location = parseLocation(raw);
+      const r = await runCheck(
+        { id: "a", name: "A", url, intervalMs: 1000 },
+        { ...deps, location },
+      );
+      assert.equal(r.status, "up");
+      assert.equal(r.statusCode, 200);
+      assert.equal(r.reason, null);
+      assert.equal(r.location, location);
+      assert.equal(agents.at(-1), `pulse-probe (${location})`);
+      completed++;
+    }
+    assert.equal(completed, 96);
+  } finally {
+    await close(server);
+  }
 });
