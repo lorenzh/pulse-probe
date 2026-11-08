@@ -1,4 +1,4 @@
-// result post: encoded answers are classified with bounded peak memory in a fresh process per case.
+// result post: encoded answers are classified with bounded peak memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

@@ -1,4 +1,4 @@
-// result post: one answer per process is classified with bounded peak memory.
+// result post: an encoded answer is classified with bounded peak memory.
 import type { Result } from "@lorenzh/pulse-contract";
 import { postResult } from "../src/client.ts";
 
