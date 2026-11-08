@@ -10,6 +10,8 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 Requires Bun 1.4.0 and a reachable pulse-api that knows your probe token.
 
+Reads of the checks from pulse-api follow no redirect, so `PULSE_API_URL` must be the final endpoint. They ask for an uncompressed answer and refuse a compressed one. Monitored HTTP checks keep their own redirect rules.
+
 ```sh
 bun install --frozen-lockfile
 PULSE_API_URL=http://localhost:3000 PULSE_LOCATION=default PULSE_PROBE_TOKEN='<token>' bun run start

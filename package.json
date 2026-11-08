@@ -27,7 +27,7 @@
     "typescript7": "npm:typescript@7.0.2"
   },
   "dependencies": {
-    "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#a14764190f33b7a317b8ca151f04a318256c11cf",
+    "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#96f33aaa85188c0794dedca89035f9c5500f85ee",
     "@lorenzh/pulse-kit": "github:lorenzh/pulse-kit#739188a87a177c0e8b5a8938e3f54c2bdaf19df4"
   }
 }
